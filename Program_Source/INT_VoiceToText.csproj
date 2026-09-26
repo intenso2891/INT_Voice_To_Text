@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>false</UseWPF>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>INT_VoiceToText</AssemblyName>
+    <RootNamespace>INTVoiceToText</RootNamespace>
+    <ApplicationManifest></ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="icon.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <Content Include="tray-blue.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <Content Include="tray-green.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <!-- Photino.NET 4 — native WebView desktop window (win-x64) -->
+    <PackageReference Include="Photino.NET" Version="4.0.16" />
+    <!-- NAudio — local microphone capture -->
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <!-- Whisper.net — local offline speech-to-text (whisper.cpp wrapper) -->
+    <PackageReference Include="Whisper.net" Version="*" />
+    <!-- CPU + CUDA/Vulkan/OpenVINO runtimes for selectable CPU/GPU recognition -->
+    <PackageReference Include="Whisper.net.AllRuntimes" Version="1.9.1" />
+  </ItemGroup>
+
+  <!-- Ship the offline speech model INSIDE the single-file exe (embedded at publish) -->
+  <ItemGroup Condition="'$(EnableDefaultContentItems)' != 'false'">
+    <Content Include="models\ggml-base.bin" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" Condition="Exists('models\ggml-base.bin')" />
+    <Content Include="models\ggml-large-v3.bin" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" Condition="Exists('models\ggml-large-v3.bin')" />
+    <Content Include="library_words\words.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <!-- React app embedded as assembly resources → works even with a lone .exe -->
+    <EmbeddedResource Include="wwwroot\**" Condition="Exists('wwwroot\index.html')" />
+  </ItemGroup>
+
+  <!-- Whisper native runtimes: must be beside the exe for SingleFile extraction or runtime probing -->
+  <Target Name="CopyWhisperDlls" AfterTargets="Publish" Condition="Exists('$(MSBuildProjectDirectory)\bin\Release\net9.0\win-x64\runtimes\win-x64\whisper.dll')">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\bin\Release\net9.0\win-x64\runtimes\win-x64\whisper.dll" DestinationFolder="$(PublishDir)" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\bin\Release\net9.0\win-x64\runtimes\win-x64\ggml-whisper.dll" DestinationFolder="$(PublishDir)" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\bin\Release\net9.0\win-x64\runtimes\win-x64\ggml-base-whisper.dll" DestinationFolder="$(PublishDir)" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\bin\Release\net9.0\win-x64\runtimes\win-x64\ggml-cpu-whisper.dll" DestinationFolder="$(PublishDir)" />
+  </Target>
+
+</Project>

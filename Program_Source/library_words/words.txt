@@ -1,0 +1,31 @@
+# Локальный словарь исправлений после Whisper.
+# Формат: распознанный вариант => правильное написание
+# Одна замена на строку. Строки с # игнорируются.
+
+дейзавр => DayZavr
+dейзавр => DayZavr
+дейзавор => DayZavr
+дэйзавр => DayZavr
+дейс => DayZ
+дэйс => DayZ
+дейз => DayZ
+дэйз => DayZ
+дейз мод => DayZ mod
+дейс мод => DayZ mod
+дэйз мод => DayZ mod
+дейз сервер => DayZ server
+дейс сервер => DayZ server
+дэйз сервер => DayZ server
+экспэншн => Expansion
+экспаншн => Expansion
+экспансия => Expansion
+экспэнсия => Expansion
+энфьюжн => Enfusion
+энфюжн => Enfusion
+стим воркшоп => Steam Workshop
+стим => Steam
+дискорд => Discord
+ютуб => YouTube
+
+# Добавляйте свои варианты ниже, например:
+# моя ошибка => CorrectWord

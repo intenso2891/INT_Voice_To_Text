@@ -1,0 +1,24 @@
+# Build output
+bin/
+obj/
+dist/
+wwwroot/
+
+# Frontend dependencies and build
+frontend/node_modules/
+frontend/dist/
+
+# Local model binaries (large; download on first run instead)
+models/*.bin
+models/vosk-model-*/
+
+# Editor / OS
+.vscode/
+.idea/
+*.user
+*.suo
+Thumbs.db
+
+# Local debug artifacts
+*.log
+qa_screens/

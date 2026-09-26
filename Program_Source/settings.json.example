@@ -1,0 +1,16 @@
+{
+  "TriggerKeys": ["Ctrl", "Shift", "A"],
+  "Mode": "PressAndSpeak",
+  "AutoDetectTriggers": true,
+  "Whisper": {
+    "ModelType": "tiny",
+    "UseLocalModel": true,
+    "MaxAudioLengthSeconds": 30
+  },
+  "Hints": {
+    "StartRecordingHint": "Нажмите триггер-клавиши для начала записи",
+    "StopRecordingHint": "Нажмите ту жэ самы клавиш или комбинация для остановки",
+    "HintPosition": "TopRight",
+    "ShowAnimation": true
+  }
+}
