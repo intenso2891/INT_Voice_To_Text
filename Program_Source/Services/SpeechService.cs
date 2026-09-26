@@ -17,6 +17,7 @@ namespace INTVoiceToText.Services;
 public sealed class SpeechService : IDisposable
 {
     private const string ModelFileName = "ggml-large-v3";
+    private readonly Mutex _crossProcessDownload = new(false, @"Local\INT_VoiceToText.ModelDownload");
     private const long LargeV3Bytes = 3_095_033_483;
     public event Action<ModelProgress>? ProgressChanged;
     public bool IsDownloading { get; private set; }
@@ -95,10 +96,19 @@ public sealed class SpeechService : IDisposable
 
             // Atomic download: write to .part first so a crash can't leave a fake model.
             var partPath = targetPath + ".downloading";
-            IsDownloading = true;
-            ProgressChanged?.Invoke(Progress with { Bytes = 0, Completed = false });
+            try { _crossProcessDownload.WaitOne(); } catch (AbandonedMutexException) { }
             try
             {
+                // Another process may have completed the download while we waited.
+                if (FileValid(targetPath))
+                {
+                    ModelPath = targetPath;
+                    Progress = Progress with { Bytes = LargeV3Bytes, Completed = true };
+                    ProgressChanged?.Invoke(Progress);
+                    return targetPath;
+                }
+                IsDownloading = true;
+                ProgressChanged?.Invoke(Progress with { Bytes = 0, Completed = false });
                 using var stream = await WhisperGgmlDownloader.Default.GetGgmlModelAsync(
                     GgmlType.LargeV3, QuantizationType.NoQuantization, ct).ConfigureAwait(false);
 
@@ -128,6 +138,7 @@ public sealed class SpeechService : IDisposable
             {
                 IsDownloading = false;
                 try { if (File.Exists(partPath)) File.Delete(partPath); } catch { }
+                try { _crossProcessDownload.ReleaseMutex(); } catch { }
             }
         }
         finally
@@ -201,5 +212,6 @@ public sealed class SpeechService : IDisposable
             _factory?.Dispose();
             _factory = null;
         }
+        _crossProcessDownload.Dispose();
     }
 }
