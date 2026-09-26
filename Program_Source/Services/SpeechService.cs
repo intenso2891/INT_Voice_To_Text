@@ -156,44 +156,79 @@ public sealed class SpeechService : IDisposable
                     ProgressChanged?.Invoke(Progress);
                     return targetPath;
                 }
-                IsDownloading = true;
-                ProgressChanged?.Invoke(Progress with { Bytes = 0, Completed = false });
-                using var stream = await WhisperGgmlDownloader.Default.GetGgmlModelAsync(
-                    GgmlType.LargeV3, QuantizationType.NoQuantization, ct).ConfigureAwait(false);
 
-                using (var file = new FileStream(partPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+                // Retry download up to 3 times on network errors.
+                const int maxDownloadRetries = 3;
+                for (int attempt = 1; attempt <= maxDownloadRetries; attempt++)
                 {
-                    var buffer = new byte[128 * 1024];
-                    int read;
-                    while ((read = await stream.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                    try
                     {
-                        await file.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-                        Progress = Progress with { Bytes = file.Length };
+                        IsDownloading = true;
+                        ProgressChanged?.Invoke(Progress with { Bytes = 0, Completed = false });
+                        onProgress?.Invoke($"downloading attempt {attempt}/{maxDownloadRetries}");
+                        using var stream = await WhisperGgmlDownloader.Default.GetGgmlModelAsync(
+                            GgmlType.LargeV3, QuantizationType.NoQuantization, ct).ConfigureAwait(false);
+
+                        // Create (or truncate) the partial file for each attempt.
+                        using (var file = new FileStream(partPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+                        {
+                            var buffer = new byte[128 * 1024];
+                            int read;
+                            while ((read = await stream.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                            {
+                                await file.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                                Progress = Progress with { Bytes = file.Length };
+                                ProgressChanged?.Invoke(Progress);
+                            }
+                            await file.FlushAsync(ct).ConfigureAwait(false);
+                        }
+
+                        if (!FileValid(partPath))
+                        {
+                            if (attempt < maxDownloadRetries)
+                            {
+                                LastError = "Model file failed integrity check, retrying...";
+                                onProgress?.Invoke("error:integrity_retry");
+                                await Task.Delay(2000 * attempt, ct).ConfigureAwait(false);
+                                continue;
+                            }
+                            throw new IOException("Downloaded model failed the integrity check after " + maxDownloadRetries + " attempts.");
+                        }
+
+                        if (File.Exists(targetPath)) File.Delete(targetPath);
+                        File.Move(partPath, targetPath);
+
+                        ModelPath = targetPath;
+                        IsDownloading = false;
+                        Progress = Progress with { Bytes = LargeV3Bytes, Completed = true };
                         ProgressChanged?.Invoke(Progress);
+                        return targetPath;
                     }
-                    await file.FlushAsync(ct).ConfigureAwait(false);
+                    catch (OperationCanceledException) { throw; } // Don't retry on cancellation.
+                    catch (Exception ex) when (ex is IOException or HttpRequestException or System.Net.Sockets.SocketException)
+                    {
+                        LastError = ex.Message;
+                        if (attempt < maxDownloadRetries)
+                        {
+                            onProgress?.Invoke($"error:{ex.Message} — retry {attempt}/{maxDownloadRetries}");
+                            // Exponential backoff: 3s, 6s, 12s...
+                            var delay = 3000 * (int)Math.Pow(2, attempt - 1);
+                            await Task.Delay(delay, ct).ConfigureAwait(false);
+                            continue;
+                        }
+                        onProgress?.Invoke("error:" + ex.Message);
+                        throw; // All retries exhausted.
+                    }
                 }
-
-                if (!FileValid(partPath)) throw new IOException("Downloaded model failed the integrity check.");
-                if (File.Exists(targetPath)) File.Delete(targetPath);
-                File.Move(partPath, targetPath);
-
-                ModelPath = targetPath;
-                IsDownloading = false;
-                Progress = Progress with { Bytes = LargeV3Bytes, Completed = true };
-                ProgressChanged?.Invoke(Progress);
-                return targetPath;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                onProgress?.Invoke("error:" + ex.Message);
-                throw;
+                // Should not reach here, but just in case.
+                throw new IOException("Download failed after " + maxDownloadRetries + " attempts.");
             }
             finally
             {
                 IsDownloading = false;
-                try { File.Delete(partPath); } catch { }
+                // Only delete partial file if the final model file is valid (download succeeded).
+                if (!FileValid(targetPath))
+                    try { File.Delete(partPath); } catch { }
                 try { _crossProcessDownload.ReleaseMutex(); } catch { }
             }
         }
