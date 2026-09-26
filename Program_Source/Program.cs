@@ -82,9 +82,19 @@ app.MapGet("/api/state", () => Results.Ok(new
      modelDownloading = engine.ModelDownloading,
      modelProgress = new { bytes = engine.ModelProgress.Bytes, totalBytes = engine.ModelProgress.TotalBytes, percent = engine.ModelProgress.Percent, completed = engine.ModelProgress.Completed },
      runtime = VoiceEngine.GetRuntimeDiagnostics(),
+     modelLastError = engine.ModelLastError,
 }));
 
 app.MapGet("/api/runtime/diagnostics", () => Results.Ok(VoiceEngine.GetRuntimeDiagnostics()));
+
+app.MapGet("/api/models", () => Results.Ok(VoiceEngine.GetModelList()));
+
+app.MapPost("/api/models/retry", async () =>
+{
+    using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+    var result = await engine.RetryModelDownloadAsync(cts.Token);
+    return Results.Ok(result);
+});
 
 app.MapGet("/api/debug/log", () =>
 {

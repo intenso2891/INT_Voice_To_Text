@@ -5,7 +5,7 @@ import {
   Settings2, Square, Trash2, VolumeX, WifiOff,
 } from "lucide-react";
 import i18n, { setAppLanguage } from "./i18n";
-import { backend, hotkeyLabel, type AppStateDto, type ResultPayload, type UpdatePayload } from "./lib/api";
+import { backend, hotkeyLabel, type AppStateDto, type ResultPayload, type UpdatePayload, type Backend as BackendType, type ModelFile } from "./lib/api";
 
 type Status = AppStateDto["status"];
 
@@ -18,6 +18,43 @@ function Tip({ text }: { text: string }) {
       <HelpCircle size={14} aria-label="?" />
       <span role="tooltip" className="tip-bubble">{text}</span>
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ModelFilesList — lazy-loaded list of model files in the models/ directory
+// ---------------------------------------------------------------------------
+function ModelFilesList({ backend }: { backend: BackendType }) {
+  const { t } = useTranslation();
+  const [files, setFiles] = useState<ModelFile[] | null>(null);
+  const [open, setOpen] = useState(false);
+
+  const load = async () => {
+    if (files !== null) { setOpen(!open); return; }
+    try {
+      const list = await backend.fetchModelList();
+      setFiles(list.files);
+      setOpen(true);
+    } catch { setFiles([]); setOpen(true); }
+  };
+
+  return (
+    <div className="model-files-wrap">
+      <button className="retry-btn" onClick={load} style={{ marginTop: 4 }}>
+        {t("modelFilesTitle")}
+      </button>
+      {open && (
+        <div className="model-files-list">
+          {files === null && <span className="runtime-dll">…</span>}
+          {files && files.length === 0 && <span className="runtime-dll missing">{t("modelFilesEmpty")}</span>}
+          {files && files.map(f => (
+            <span key={f.name} className={"runtime-dll" + (f.valid ? " ok" : " missing")}>
+              {f.valid ? "✓" : "✗"} {f.name} <small>({f.sizeMB} МБ)</small>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -586,6 +623,18 @@ export default function App() {
               </div>
             )}
             {!info.modelReady && modelProgress.completed && <small className="model-status">{t("modelFinalizing")}</small>}
+            {info.modelLastError && <small className="runtime-dll missing">⚠ {info.modelLastError}</small>}
+            {!info.modelReady && !info.modelDownloading && (
+              <button className="retry-btn" onClick={async () => {
+                try {
+                  await backend.retryModelDownload();
+                } catch { setError(t("updateFailed")); }
+              }} disabled={info.modelDownloading}>
+                <Loader2 size={13} className={info.modelDownloading ? "spin" : ""} /> {t("modelRetry")}
+              </button>
+            )}
+            {/* Model files list */}
+            <ModelFilesList backend={backend} />
           </div>
 
           {/* ---------- Whisper Runtime diagnostics ---------- */}

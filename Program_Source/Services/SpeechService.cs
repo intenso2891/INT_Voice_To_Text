@@ -36,6 +36,45 @@ public sealed class SpeechService : IDisposable
     private int _gpuDevice;
     public bool IsReady => !string.IsNullOrEmpty(ModelPath);
 
+    /// <summary>Last error from EnsureModelAsync (for diagnostics).</summary>
+    public string? LastError { get; private set; }
+
+    /// <summary>List all model files in the models/ directory with sizes.</summary>
+    public static object GetModelList()
+    {
+        var dir = Path.Combine(ExeDir(), "models");
+        var files = new List<object>();
+        if (Directory.Exists(dir))
+        {
+            foreach (var f in Directory.EnumerateFiles(dir).OrderByDescending(File.GetLastWriteTimeUtc))
+            {
+                var info = new FileInfo(f);
+                files.Add(new { name = Path.GetFileName(f), sizeMB = Math.Round(info.Length / 1048576.0, 1), valid = FileValid(f) });
+            }
+        }
+        return new { modelsDir = dir, dirExists = Directory.Exists(dir), files };
+    }
+
+    /// <summary>Force a fresh download attempt (resets cached state).</summary>
+    public async Task<object> RetryDownloadAsync(CancellationToken ct = default)
+    {
+        LastError = null;
+        // Reset so EnsureModelAsync will re-scan and re-download.
+        ModelPath = null;
+        Progress = new ModelProgress(0, LargeV3Bytes, false);
+        ProgressChanged?.Invoke(Progress);
+        try
+        {
+            var path = await EnsureModelAsync(ct);
+            return new { ok = true, path };
+        }
+        catch (Exception ex)
+        {
+            LastError = ex.Message;
+            return new { ok = false, error = ex.Message };
+        }
+    }
+
     public void ConfigureCompute(string mode, int gpuDevice)
     {
         lock (_gate)
@@ -54,6 +93,7 @@ public sealed class SpeechService : IDisposable
         try
         {
             if (!string.IsNullOrEmpty(ModelPath)) return ModelPath;
+            LastError = null;
 
             // Clean up stale .downloading files from previous crashed downloads.
             try
@@ -90,7 +130,6 @@ public sealed class SpeechService : IDisposable
 
             // Not found locally → one-time download (requires internet once only).
             onProgress?.Invoke("downloading");
-            // Keep the large model beside the portable executable, so it is easy to find and move with the app.
             var targetDir = Path.Combine(ExeDir(), "models");
             Directory.CreateDirectory(targetDir);
             var targetPath = Path.Combine(targetDir, ModelFileName + ".bin");
@@ -110,7 +149,6 @@ public sealed class SpeechService : IDisposable
             try { _crossProcessDownload.WaitOne(); } catch (AbandonedMutexException) { }
             try
             {
-                // Another process may have completed the download while we waited.
                 if (FileValid(targetPath))
                 {
                     ModelPath = targetPath;
@@ -141,10 +179,16 @@ public sealed class SpeechService : IDisposable
                 File.Move(partPath, targetPath);
 
                 ModelPath = targetPath;
-                IsDownloading = false;  // Model is ready NOW — allow recording immediately.
+                IsDownloading = false;
                 Progress = Progress with { Bytes = LargeV3Bytes, Completed = true };
                 ProgressChanged?.Invoke(Progress);
                 return targetPath;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                onProgress?.Invoke("error:" + ex.Message);
+                throw;
             }
             finally
             {

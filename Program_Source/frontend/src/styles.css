@@ -126,6 +126,13 @@ select { margin-left: auto; background: #10172b; color: var(--text); border: 1px
 .runtime-dll.missing { color: #ff6680; background: rgba(255,102,128,.08); font-weight: 600; }
 .runtime-dll small { color: var(--muted); font-weight: 400; }
 
+/* Retry button + model files */
+.retry-btn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(139,124,255,.4); border-radius: 7px; padding: 5px 10px; background: rgba(139,124,255,.12); color: var(--cyan); font-size: 12px; cursor: pointer; transition: background .15s; }
+.retry-btn:hover { background: rgba(139,124,255,.25); }
+.retry-btn:disabled { opacity: .5; cursor: wait; }
+.model-files-wrap { width: 100%; }
+.model-files-list { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; padding: 6px 8px; border-radius: 8px; background: rgba(0,0,0,.2); }
+
 /* Tips/footer */
 .tip-wrap { position: relative; display: inline-flex; color: #7583a5; cursor: help; flex: none; }
 .tip-wrap:hover { color: var(--cyan); z-index: 30; }

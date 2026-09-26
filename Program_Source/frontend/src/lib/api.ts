@@ -22,6 +22,19 @@ export interface AppStateDto {
   modelDownloading: boolean;
   modelProgress: { bytes: number; totalBytes: number; percent: number; completed: boolean };
   runtime: { directory: string; runtimesDirExists: boolean; dlls: { name: string; exists: boolean; sizeKB: number }[] };
+  modelLastError: string | null;
+}
+
+export interface ModelFile {
+  name: string;
+  sizeMB: number;
+  valid: boolean;
+}
+
+export interface ModelListDto {
+  modelsDir: string;
+  dirExists: boolean;
+  files: ModelFile[];
 }
 
 export interface ResultPayload {
@@ -122,6 +135,18 @@ export class Backend {
   async installUpdate(update: UpdatePayload): Promise<void> {
     const res = await fetch("/api/update/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(update) });
     if (!res.ok) throw new Error("update http " + res.status);
+  }
+
+  async fetchModelList(): Promise<ModelListDto> {
+    const res = await fetch("/api/models");
+    if (!res.ok) throw new Error("models http " + res.status);
+    return (await res.json()) as ModelListDto;
+  }
+
+  async retryModelDownload(): Promise<{ ok: boolean; error?: string }> {
+    const res = await fetch("/api/models/retry", { method: "POST" });
+    if (!res.ok) throw new Error("models/retry http " + res.status);
+    return (await res.json()) as { ok: boolean; error?: string };
   }
 }
 

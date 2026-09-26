@@ -259,6 +259,15 @@ public sealed class VoiceEngine : IDisposable
     /// <summary>Prefetch/locate the STT model (called at startup, non-blocking).</summary>
     public Task WarmupModelAsync() => _speech.EnsureModelAsync();
 
+    /// <summary>List all model files in models/ dir with sizes and validity.</summary>
+    public static object GetModelList() => SpeechService.GetModelList();
+
+    /// <summary>Force re-download of the model.</summary>
+    public Task<object> RetryModelDownloadAsync(CancellationToken ct) => _speech.RetryDownloadAsync(ct);
+
+    /// <summary>Last download error (null if none).</summary>
+    public string? ModelLastError => _speech.LastError;
+
     public void Dispose()
     {
         try { _hotkeys?.Dispose(); } catch { }
