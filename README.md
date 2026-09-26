@@ -81,6 +81,17 @@ dotnet publish -c Release -r win-x64 --self-contained true `
 
 ## 📦 Releases
 
+Релизы собираются автоматически через [GitHub Actions](.github/workflows/release.yml). Чтобы выпустить новую версию:
+
+```powershell
+git add .
+git commit -m "Release v1.5.3"
+git tag v1.5.3
+git push origin main --tags
+```
+
+После отправки тега GitHub соберёт `Program` из `Program_Source` и опубликует архив в разделе **Releases**. Готовые сборки не хранятся в обычных файлах репозитория — они слишком большие из-за native runtime.
+
 Готовые сборки публикуются в разделе **Releases** — не в файлы репозитория (они слишком большие из-за моделей).
 
 ```text

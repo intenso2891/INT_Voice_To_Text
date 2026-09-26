@@ -1,0 +1,65 @@
+name: Build and publish release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      DOTNET_ROLL_FORWARD: LatestMajor
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Program_Source/frontend/package-lock.json
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.x'
+
+      - name: Build frontend
+        working-directory: Program_Source/frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Publish application
+        working-directory: Program_Source
+        run: >-
+          dotnet publish INT_VoiceToText.csproj
+          -c Release -r win-x64 --self-contained true
+          /p:PublishSingleFile=true
+          /p:IncludeNativeLibrariesForSelfExtract=true
+          -o ..\Program
+
+      - name: Prepare portable Program
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force Program\library_words | Out-Null
+          Copy-Item Program_Source\icon.ico,Program_Source\tray-blue.ico,Program_Source\tray-green.ico Program -Force
+          Copy-Item Program_Source\library_words\words.txt Program\library_words\words.txt -Force
+          Remove-Item Program\*.pdb -Force -ErrorAction SilentlyContinue
+          Remove-Item Program\models -Recurse -Force -ErrorAction SilentlyContinue
+          # Large V3 is downloaded once by the application and is not packed into Release.
+          Compress-Archive -Path Program -DestinationPath "INT_VoiceToText-${{ github.ref_name }}.zip" -CompressionLevel Optimal
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: INT_VoiceToText-${{ github.ref_name }}.zip

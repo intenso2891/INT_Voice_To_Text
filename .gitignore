@@ -1,0 +1,17 @@
+﻿# INT VoiceToText: готовая программа хранится локально и публикуется через Releases
+Program/
+
+# Generated build output
+Program_Source/bin/
+Program_Source/obj/
+Program_Source/wwwroot/
+Program_Source/frontend/node_modules/
+Program_Source/frontend/dist/
+Program_Source/models/*.bin
+Program_Source/qa_screens/
+
+# Local files
+*.log
+Thumbs.db
+.vs/
+.vscode/
