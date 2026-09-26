@@ -588,6 +588,29 @@ export default function App() {
             {!info.modelReady && modelProgress.completed && <small className="model-status">{t("modelFinalizing")}</small>}
           </div>
 
+          {/* ---------- Whisper Runtime diagnostics ---------- */}
+          {info?.runtime && (
+            <div className="model-row runtime-row">
+              <span className="row-label"><Cpu size={15} /> {t("runtimeTitle")}</span>
+              <small className={"model-status" + (info.runtime.dlls.every(d => d.exists) ? " ready" : "")}>
+                {info.runtime.dlls.every(d => d.exists) ? t("runtimeOk") : t("runtimeMissing")}
+              </small>
+              <div className="runtime-dlls">
+                {info.runtime.dlls.map(d => (
+                  <span key={d.name} className={"runtime-dll" + (d.exists ? " ok" : " missing")}>
+                    {d.exists ? "✓" : "✗"} {d.name}
+                    {d.exists && <small> ({d.sizeKB > 1024 ? `${(d.sizeKB / 1024).toFixed(0)} МБ` : `${d.sizeKB} КБ`})</small>}
+                  </span>
+                ))}
+              </div>
+              <div className="runtime-dlls" style={{marginTop: 4}}>
+                <span className={"runtime-dll" + (info.runtime.runtimesDirExists ? " ok" : " missing")}>
+                  {info.runtime.runtimesDirExists ? "✓" : "✗"} runtimes/win-x64/native/
+                </span>
+              </div>
+            </div>
+          )}
+
           <footer className="ver">
             {t("versionLabel")} <b>{info.version}</b> · INT VoiceToText
             <small className="ver-credit">Created by INTENSO.Dev</small>

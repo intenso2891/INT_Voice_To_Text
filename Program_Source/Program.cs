@@ -81,7 +81,10 @@ app.MapGet("/api/state", () => Results.Ok(new
     modelReady = engine.ModelReady,
      modelDownloading = engine.ModelDownloading,
      modelProgress = new { bytes = engine.ModelProgress.Bytes, totalBytes = engine.ModelProgress.TotalBytes, percent = engine.ModelProgress.Percent, completed = engine.ModelProgress.Completed },
+     runtime = VoiceEngine.GetRuntimeDiagnostics(),
 }));
+
+app.MapGet("/api/runtime/diagnostics", () => Results.Ok(VoiceEngine.GetRuntimeDiagnostics()));
 
 app.MapGet("/api/debug/log", () =>
 {

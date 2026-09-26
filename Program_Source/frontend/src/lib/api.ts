@@ -21,6 +21,7 @@ export interface AppStateDto {
   modelReady: boolean;
   modelDownloading: boolean;
   modelProgress: { bytes: number; totalBytes: number; percent: number; completed: boolean };
+  runtime: { directory: string; runtimesDirExists: boolean; dlls: { name: string; exists: boolean; sizeKB: number }[] };
 }
 
 export interface ResultPayload {

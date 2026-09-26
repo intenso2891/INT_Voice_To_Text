@@ -195,7 +195,12 @@ public sealed class VoiceEngine : IDisposable
         catch (Exception ex)
         {
             DebugLog("TRANSCRIBE_ERROR " + ex);
-            _lastError = ex.Message.StartsWith("MODEL_DOWNLOADING") ? "MODEL_DOWNLOADING: Модель ещё скачивается — дождитесь окончания загрузки" : "TRANSCRIBE_ERROR: " + ex.Message;
+            if (ex.Message.Contains("MODEL_DOWNLOADING"))
+                _lastError = "MODEL_DOWNLOADING: Модель ещё скачивается — дождитесь окончания загрузки";
+            else if (ex is FileNotFoundException || ex.Message.Contains("Native Library"))
+                _lastError = "RUNTIME_MISSING: Отсутствуют файлы Whisper runtime. Откройте Настройки → Whisper Runtime для диагностики.";
+            else
+                _lastError = "TRANSCRIBE_ERROR: " + ex.Message;
             Broadcast("error", new { message = _lastError });
         }
         finally
@@ -227,6 +232,23 @@ public sealed class VoiceEngine : IDisposable
 
     /// <summary>Current model status for the settings panel.</summary>
     public bool ModelReady => _speech.IsReady;
+
+    /// <summary>Check which native Whisper DLLs exist beside the exe.</summary>
+    public static object GetRuntimeDiagnostics()
+    {
+        var dir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+        string[] critical = ["whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll"];
+        var dlls = new List<object>();
+        foreach (var name in critical)
+        {
+            var fullPath = Path.Combine(dir, name);
+            var exists = File.Exists(fullPath);
+            var size = exists ? new FileInfo(fullPath).Length : 0L;
+            dlls.Add(new { name, exists, sizeKB = size / 1024 });
+        }
+        var nativeDir = Path.Combine(dir, "runtimes", "win-x64", "native");
+        return new { directory = dir, runtimesDirExists = Directory.Exists(nativeDir), dlls };
+    }
 
     /// <summary>True while the large model is being downloaded for the first time.</summary>
     public bool ModelDownloading => _speech.IsDownloading;
