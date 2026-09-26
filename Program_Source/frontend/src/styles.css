@@ -111,8 +111,9 @@ select { margin-left: auto; background: #10172b; color: var(--text); border: 1px
 .model-progress-fill { height: 100%; border-radius: 5px; background: linear-gradient(90deg, var(--violet), var(--cyan)); transition: width .2s ease; }
 .model-progress-label { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 
-.update-card { display: flex; align-items: center; gap: 10px; padding: 11px 13px; border: 1px solid rgba(139,124,255,.45); border-radius: 12px; background: rgba(35,30,74,.78); color: #dfe4ff; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+.update-card { display: flex; align-items: center; gap: 10px; padding: 11px 13px; border: 1px solid rgba(139,124,255,.45); border-radius: 12px; background: rgba(35,30,74,.78); color: #dfe4ff; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.18); flex-wrap: wrap; }
 .update-card > span { flex: 1; }
+.update-progress-wrap { width: 100%; display: flex; flex-direction: column; gap: 5px; }
 .update-btn { border: 0; border-radius: 8px; padding: 7px 12px; color: #08111c; background: var(--cyan); font-weight: 700; cursor: pointer; white-space: nowrap; }
 .update-btn:disabled { opacity: .7; cursor: wait; }
 .update-dismiss { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; }

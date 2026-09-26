@@ -229,6 +229,7 @@ export default function App() {
   const [overlayText, setOverlayText] = useState<string | null>(null);
   const [availableUpdate, setAvailableUpdate] = useState<UpdatePayload | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState({ bytes: 0, totalBytes: 0, percent: 0, phase: "" });
   const [modelProgress, setModelProgress] = useState({ bytes: 0, totalBytes: 3095033483, percent: 0, completed: false });
   const [history, setHistory] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("intvtt_history") ?? "[]") as string[]; } catch { return []; }
@@ -285,6 +286,7 @@ export default function App() {
         };
         backend.onUpdate = (u) => setAvailableUpdate(u);
         backend.onModelProgress = (p) => setModelProgress(p);
+        backend.onUpdateProgress = (p) => setUpdateProgress(p);
 
         await backend.connect();
         try {
@@ -425,14 +427,22 @@ export default function App() {
       {/* ---------- update banner ---------- */}
       {availableUpdate && (
         <section className="update-card">
-          <span>{t("updateAvailable")} <b>v{availableUpdate.version}</b> ({t("currentVersion")} {info?.version})</span>
-          <button className="update-btn" disabled={updating} onClick={async () => {
-            setUpdating(true);
-            try { await backend.installUpdate(availableUpdate); } catch { setUpdating(false); setError(t("updateFailed")); }
-          }}>
-            {updating ? <><Loader2 size={14} className="spin" /> {t("updateInstalling")}</> : t("updateNow")}
-          </button>
-          <button className="update-dismiss" onClick={() => setAvailableUpdate(null)}>✕</button>
+          {!updating ? (
+            <>
+              <span>{t("updateAvailable")} <b>v{availableUpdate.version}</b> ({t("currentVersion")} {info?.version})</span>
+              <button className="update-btn" onClick={async () => {
+                setUpdating(true);
+                try { await backend.installUpdate(availableUpdate); } catch { setUpdating(false); setError(t("updateFailed")); }
+              }}>{t("updateNow")}</button>
+              <button className="update-dismiss" onClick={() => setAvailableUpdate(null)}>✕</button>
+            </>
+          ) : (
+            <div className="update-progress-wrap">
+              <span>{t("updateInstalling")} <b>v{availableUpdate.version}</b></span>
+              <div className="model-progress-track"><div className="model-progress-fill" style={{ width: `${updateProgress.percent || 0}%` }} /></div>
+              <span className="model-progress-label">{updateProgress.percent || 0}% · {formatBytes(updateProgress.bytes)} / {updateProgress.totalBytes > 0 ? formatBytes(updateProgress.totalBytes) : "???"}</span>
+            </div>
+          )}
         </section>
       )}
 

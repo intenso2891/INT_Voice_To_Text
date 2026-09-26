@@ -140,6 +140,7 @@ app.MapPost("/api/toggle", () =>
 });
 
 var updater = new UpdateService();
+updater.ProgressChanged += p => { try { _ = engine.Hub?.Clients.All.SendAsync("updateProgress", new { bytes = p.Bytes, totalBytes = p.TotalBytes, percent = p.Percent, phase = p.Phase }); } catch { } };
 
 app.MapGet("/api/update/check", async () =>
 {

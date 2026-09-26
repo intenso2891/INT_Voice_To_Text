@@ -52,6 +52,7 @@ export class Backend {
   onDebug?: (line: string) => void;
   onUpdate?: (update: UpdatePayload) => void;
   onModelProgress?: (progress: AppStateDto["modelProgress"]) => void;
+  onUpdateProgress?: (progress: { bytes: number; totalBytes: number; percent: number; phase: string }) => void;
 
   async connect(): Promise<void> {
     if (this.connection && this.connection.state === "Connected") return;
@@ -68,6 +69,7 @@ export class Backend {
     conn.on("debug", (payload: { line: string }) => this.onDebug?.(payload.line));
     conn.on("update", (payload: UpdatePayload) => this.onUpdate?.(payload));
     conn.on("modelProgress", (payload: AppStateDto["modelProgress"]) => this.onModelProgress?.(payload));
+    conn.on("updateProgress", (payload: { bytes: number; totalBytes: number; percent: number; phase: string }) => this.onUpdateProgress?.(payload));
 
     try {
       await conn.start();
