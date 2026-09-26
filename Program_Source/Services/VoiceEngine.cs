@@ -25,7 +25,7 @@ public sealed class VoiceEngine : IDisposable
 
     public IHubContext<VoiceHub>? Hub { get; set; }
     public Action? BringWindow { get; set; }
-    public Action<string>? SetCompactMode { get; set; }  // "off", "recording", "ready"
+    public Action<string>? SetCompactMode { get; set; }  // "off", "recording", "transcribing", "ready"
 
     private volatile EngineStatus _status = EngineStatus.Idle;
     private volatile string? _lastError;
@@ -140,7 +140,7 @@ public sealed class VoiceEngine : IDisposable
         }
 
         DebugLog($"RECORD_STOP samples={samples.Length} seconds={samples.Length / 16000.0:0.00}");
-        try { SetCompactMode?.Invoke("ready"); } catch { }
+        try { SetCompactMode?.Invoke("transcribing"); } catch { }
         if (samples.Length < 16000 / 4) // less than ~250 ms of audio — treat as accidental tap
         {
             DebugLog("RECORD_REJECTED too_short");

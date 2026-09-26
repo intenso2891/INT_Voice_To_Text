@@ -302,7 +302,7 @@ var uiThread = new Thread(() =>
             var hwnd = CurrentHwnd();
             if (hwnd == IntPtr.Zero) return;
             var wa = W32.GetWorkArea();
-            bool compact = mode is "recording" or "ready";
+            bool compact = mode is "recording" or "transcribing" or "ready";
             SetTrayState(mode == "recording");
             if (!compact && hiddenInTray) { W32.SetTopMost(hwnd, false); W32.HideWindow(hwnd); return; }
             bool overlayOnly = hiddenInTray && compact; // in tray → tiny overlay bar, not the full UI
