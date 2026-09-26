@@ -251,6 +251,8 @@ export default function App() {
         const st = await backend.getState();
         if (!disposed) setInfo(st);
         setStatus(st.status === "idle" ? "idle" : st.status);
+        if (st.status === "recording") setOverlay("recording");
+        else if (st.status === "transcribing") setOverlay("transcribing");
 
         backend.onState = (s) => {
           setStatus(s);

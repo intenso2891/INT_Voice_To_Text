@@ -214,6 +214,7 @@ var uiThread = new Thread(() =>
     {
         var window = new PhotinoWindow(null); // null parent → top-level window
         IntPtr windowHandle = IntPtr.Zero;
+        string? pendingCompactMode = null;
         window.SetTitle($"INT VoiceToText v{AppState.AppVersion}")
               .SetUseOsDefaultSize(false)
               .SetSize(WinW, WinH)
@@ -231,6 +232,7 @@ var uiThread = new Thread(() =>
                 try { File.AppendAllText(Path.Combine(AppContext.BaseDirectory, "int_voicetext_debug.log"), $"CREATED hwnd={windowHandle}\n"); } catch { }
                 var wa = W32.GetWorkArea();
                 window.MoveTo(wa.Right - WinW - 24, wa.Top + 24, true);
+                if (pendingCompactMode is not null) engine.SetCompactMode?.Invoke(pendingCompactMode);
             }
             catch (Exception ex)
             {
@@ -302,7 +304,8 @@ var uiThread = new Thread(() =>
         engine.SetCompactMode = mode =>
         {
             var hwnd = CurrentHwnd();
-            if (hwnd == IntPtr.Zero) return;
+            if (hwnd == IntPtr.Zero) { pendingCompactMode = mode; SetTrayState(mode == "recording"); return; }
+            pendingCompactMode = mode;
             var wa = W32.GetWorkArea();
             bool compact = mode is "recording" or "transcribing" or "ready";
             SetTrayState(mode == "recording");
