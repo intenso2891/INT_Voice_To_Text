@@ -566,14 +566,16 @@ export default function App() {
           <div className="model-row">
             <span className="row-label"><WifiOff size={15} /> {t("modelTitle")}</span>
             <Tip text={t("modelHint")} />
-            <small className={"model-status" + (info.modelReady ? " ready" : "")}>{info.modelReady ? t("modelReady") : info.modelDownloading ? t("modelDownloading") : t("modelNotReady")}</small>
+            <small className={"model-status" + (info.modelReady ? " ready" : "")}>
+              {info.modelReady ? t("modelReady") : info.modelDownloading ? t("modelDownloading") : modelProgress.completed ? t("modelCompleted") : t("modelNotReady")}
+            </small>
             {!info.modelReady && (
               <div className="model-progress-wrap">
-                <div className="model-progress-track"><div className="model-progress-fill" style={{ width: `${modelProgress.percent}%` }} /></div>
-                <span className="model-progress-label">{modelProgress.percent}% · {formatBytes(modelProgress.bytes)} / {formatBytes(modelProgress.totalBytes)}</span>
+                <div className="model-progress-track"><div className="model-progress-fill" style={{ width: `${modelProgress.completed ? 100 : Math.min(modelProgress.percent, 99)}%` }} /></div>
+                <span className="model-progress-label">{modelProgress.completed ? "100" : Math.min(modelProgress.percent, 99)}% · {formatBytes(modelProgress.bytes)} / {formatBytes(modelProgress.totalBytes)}</span>
               </div>
             )}
-            {info.modelReady && modelProgress.completed && <small className="model-status ready">{t("modelCompleted")}</small>}
+            {!info.modelReady && modelProgress.completed && <small className="model-status">{t("modelFinalizing")}</small>}
           </div>
 
           <footer className="ver">

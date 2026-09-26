@@ -141,6 +141,7 @@ public sealed class SpeechService : IDisposable
                 File.Move(partPath, targetPath);
 
                 ModelPath = targetPath;
+                IsDownloading = false;  // Model is ready NOW — allow recording immediately.
                 Progress = Progress with { Bytes = LargeV3Bytes, Completed = true };
                 ProgressChanged?.Invoke(Progress);
                 return targetPath;
