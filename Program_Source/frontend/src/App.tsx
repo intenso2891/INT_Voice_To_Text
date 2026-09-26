@@ -280,6 +280,10 @@ export default function App() {
         backend.onUpdate = (u) => setAvailableUpdate(u);
 
         await backend.connect();
+        try {
+          const update = await backend.checkUpdate();
+          if (update && !disposed) setAvailableUpdate(update);
+        } catch { /* offline update check is optional */ }
       } catch {
         // server still booting — retry loop until it answers
         const poll = window.setInterval(async () => {

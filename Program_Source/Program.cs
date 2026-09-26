@@ -138,6 +138,12 @@ app.MapPost("/api/toggle", () =>
 
 var updater = new UpdateService();
 
+app.MapGet("/api/update/check", async () =>
+{
+    try { return Results.Ok(await updater.CheckAsync()); }
+    catch { return Results.Ok((AvailableUpdate?)null); }
+});
+
 app.MapPost("/api/update/install", async (UpdateInstallBody body) =>
 {
     try

@@ -106,6 +106,12 @@ export class Backend {
     await fetch("/api/toggle", { method: "POST" });
   }
 
+  async checkUpdate(): Promise<UpdatePayload | null> {
+    const res = await fetch("/api/update/check");
+    if (!res.ok) return null;
+    return (await res.json()) as UpdatePayload | null;
+  }
+
   async installUpdate(update: UpdatePayload): Promise<void> {
     const res = await fetch("/api/update/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(update) });
     if (!res.ok) throw new Error("update http " + res.status);
