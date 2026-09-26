@@ -136,6 +136,25 @@ app.MapPost("/api/toggle", () =>
     return Results.NoContent();
 });
 
+var updater = new UpdateService();
+
+app.MapPost("/api/update/install", async (UpdateInstallBody body) =>
+{
+    try
+    {
+        var update = new AvailableUpdate(body.version, body.releaseUrl, body.assetUrl, body.assetName);
+        var zip = await updater.DownloadAsync(update);
+        var target = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+        var updaterExe = Path.Combine(target, "INT_VoiceToText.Updater.exe");
+        if (!File.Exists(updaterExe)) return Results.NotFound(new { error = "UPDATER_NOT_INSTALLED" });
+        var exe = Environment.ProcessPath ?? Path.Combine(target, "INT_VoiceToText.exe");
+        Process.Start(new ProcessStartInfo(updaterExe, $"--pid {Environment.ProcessId} --zip \"{zip}\" --target \"{target}\" --exe \"{exe}\"") { WorkingDirectory = target, UseShellExecute = true });
+        _ = Task.Run(async () => { await Task.Delay(500); Environment.Exit(0); });
+        return Results.Ok(new { started = true });
+    }
+    catch (Exception ex) { return Results.Problem(ex.Message); }
+});
+
 await app.StartAsync();
 
 var serverAddresses = app.Services.GetRequiredService<IServer>()
@@ -156,6 +175,20 @@ catch { /* non-fatal */ }
 // Hotkeys live + model warm-up in the background (offline after first use).
 engine.Start();
 _ = engine.WarmupModelAsync();
+
+// ---------------------------------------------------------------------------
+// 3b. GitHub Releases auto-update check (non-blocking, silent on failure)
+// ---------------------------------------------------------------------------
+_ = Task.Run(async () =>
+{
+    try
+    {
+        var update = await updater.CheckAsync().ConfigureAwait(false);
+        if (update != null)
+            try { await app.Services.GetRequiredService<IHubContext<VoiceHub>>().Clients.All.SendAsync("update", new { version = update.Version, releaseUrl = update.ReleaseUrl, assetUrl = update.AssetUrl, assetName = update.AssetName }); } catch { }
+    }
+    catch { /* offline/rate-limited — silently skip */ }
+});
 
 Debug.WriteLine($"[INT VoiceToText] backend ready at {appUrl}");
 
@@ -298,3 +331,4 @@ engine.Dispose();
 }
 
 record SettingsUpdateBody(HotkeyConfig? hotkey, string? language, bool? pasteResult, int? microphoneDevice, float? microphoneSensitivity, bool? debugMode, bool? startWithWindows, bool? minimizeToTrayOnClose, string? computeMode, int? gpuDevice);
+record UpdateInstallBody(string version, string releaseUrl, string assetUrl, string assetName);

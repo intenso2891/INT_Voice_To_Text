@@ -27,6 +27,13 @@ export interface ResultPayload {
   pasted: boolean;
 }
 
+export interface UpdatePayload {
+  version: string;
+  releaseUrl: string;
+  assetUrl: string;
+  assetName: string;
+}
+
 export function hotkeyLabel(modifiers: string[], key: string): string {
   const names: Record<string, string> = { ctrl: "Ctrl", shift: "Shift", alt: "Alt", win: "Win" };
   const parts = modifiers.map((m) => names[m] ?? m);
@@ -41,6 +48,7 @@ export class Backend {
   onError?: (message: string) => void;
   onLevel?: (level: number) => void;
   onDebug?: (line: string) => void;
+  onUpdate?: (update: UpdatePayload) => void;
 
   async connect(): Promise<void> {
     if (this.connection && this.connection.state === "Connected") return;
@@ -55,6 +63,7 @@ export class Backend {
     conn.on("error", (payload: { message: string }) => this.onError?.(payload.message));
     conn.on("level", (payload: { level: number }) => this.onLevel?.(payload.level));
     conn.on("debug", (payload: { line: string }) => this.onDebug?.(payload.line));
+    conn.on("update", (payload: UpdatePayload) => this.onUpdate?.(payload));
 
     try {
       await conn.start();
@@ -95,6 +104,11 @@ export class Backend {
 
   async toggle(): Promise<void> {
     await fetch("/api/toggle", { method: "POST" });
+  }
+
+  async installUpdate(update: UpdatePayload): Promise<void> {
+    const res = await fetch("/api/update/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(update) });
+    if (!res.ok) throw new Error("update http " + res.status);
   }
 }
 

@@ -107,6 +107,12 @@ select { margin-left: auto; background: #10172b; color: var(--text); border: 1px
 .model-status { width: 100%; color: var(--muted); font-size: 13px; padding-left: 30px; }
 .model-status.ready { color: var(--green); }
 
+.update-card { display: flex; align-items: center; gap: 10px; padding: 11px 13px; border: 1px solid rgba(139,124,255,.45); border-radius: 12px; background: rgba(35,30,74,.78); color: #dfe4ff; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+.update-card > span { flex: 1; }
+.update-btn { border: 0; border-radius: 8px; padding: 7px 12px; color: #08111c; background: var(--cyan); font-weight: 700; cursor: pointer; white-space: nowrap; }
+.update-btn:disabled { opacity: .7; cursor: wait; }
+.update-dismiss { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; }
+
 /* Tips/footer */
 .tip-wrap { position: relative; display: inline-flex; color: #7583a5; cursor: help; flex: none; }
 .tip-wrap:hover { color: var(--cyan); z-index: 30; }

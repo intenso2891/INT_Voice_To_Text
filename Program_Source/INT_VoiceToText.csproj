@@ -16,6 +16,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Updater\**" />
+    <None Remove="Updater\**" />
     <Content Include="icon.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
     <Content Include="tray-blue.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
     <Content Include="tray-green.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />

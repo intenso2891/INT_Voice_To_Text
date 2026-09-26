@@ -5,7 +5,7 @@ import {
   Settings2, Square, Trash2, VolumeX, WifiOff,
 } from "lucide-react";
 import i18n, { setAppLanguage } from "./i18n";
-import { backend, hotkeyLabel, type AppStateDto, type ResultPayload } from "./lib/api";
+import { backend, hotkeyLabel, type AppStateDto, type ResultPayload, type UpdatePayload } from "./lib/api";
 
 type Status = AppStateDto["status"];
 
@@ -227,6 +227,8 @@ export default function App() {
   const [overlay, setOverlay] = useState<"off" | "recording" | "ready">("off");
   const [compactView, setCompactView] = useState(window.innerHeight < 260);
   const [overlayText, setOverlayText] = useState<string | null>(null);
+  const [availableUpdate, setAvailableUpdate] = useState<UpdatePayload | null>(null);
+  const [updating, setUpdating] = useState(false);
   const [history, setHistory] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("intvtt_history") ?? "[]") as string[]; } catch { return []; }
   });
@@ -275,6 +277,7 @@ export default function App() {
             : msg.replace(/^[A-Z_]+:\s*/, "");
           setError(friendly);
         };
+        backend.onUpdate = (u) => setAvailableUpdate(u);
 
         await backend.connect();
       } catch {
@@ -399,6 +402,20 @@ export default function App() {
           </button>
         </span>
       </header>
+
+      {/* ---------- update banner ---------- */}
+      {availableUpdate && (
+        <section className="update-card">
+          <span>{t("updateAvailable")} <b>v{availableUpdate.version}</b> ({t("currentVersion")} {info?.version})</span>
+          <button className="update-btn" disabled={updating} onClick={async () => {
+            setUpdating(true);
+            try { await backend.installUpdate(availableUpdate); } catch { setUpdating(false); setError(t("updateFailed")); }
+          }}>
+            {updating ? <><Loader2 size={14} className="spin" /> {t("updateInstalling")}</> : t("updateNow")}
+          </button>
+          <button className="update-dismiss" onClick={() => setAvailableUpdate(null)}>✕</button>
+        </section>
+      )}
 
       {/* ---------- status card ---------- */}
       <section className={"status-card " + status}>

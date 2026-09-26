@@ -14,7 +14,7 @@ public sealed record HotkeyConfig(
 
 public sealed class AppState
 {
-    public const string AppVersion = "1.5.2";
+    public const string AppVersion = "1.6.0";
     private static readonly JsonSerializerOptions JsonOpts = new()
     { WriteIndented = true };
 
