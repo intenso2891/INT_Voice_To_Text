@@ -3,6 +3,7 @@
 // ============================================================================
 
 using System.Runtime.InteropServices;
+using System.Drawing;
 using System.Text;
 
 namespace INTVoiceToText.Native;
@@ -22,6 +23,27 @@ public static class W32
     {
         if (SystemParametersInfoW(SPI_GETWORKAREA, 0, out var rect, 0)) return rect;
         return new RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1080 };
+    }
+
+    // ---------- Window icon ----------
+    private const uint WM_SETICON = 0x0080;
+    private const int ICON_SMALL = 0;
+    private const int ICON_BIG = 1;
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SendMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    private static Icon? _windowIcon;
+
+    public static void SetWindowIcon(IntPtr hwnd, string path)
+    {
+        if (hwnd == IntPtr.Zero || !File.Exists(path)) return;
+        try
+        {
+            _windowIcon?.Dispose();
+            _windowIcon = new Icon(path);
+            SendMessageW(hwnd, WM_SETICON, (IntPtr)ICON_BIG, _windowIcon.Handle);
+            SendMessageW(hwnd, WM_SETICON, (IntPtr)ICON_SMALL, _windowIcon.Handle);
+        }
+        catch { }
     }
 
     // ---------- Foreground window ----------

@@ -4,7 +4,7 @@
 
 Офлайн-приложение для Windows: нажал глобальную горячую клавишу → сказал → распознанный текст автоматически в буфере обмена (и при желании вставлен `Ctrl+V` в любое окно). Работает полностью локально — голос никуда не отправляется.
 
-![Version](https://img.shields.io/badge/версия-1.6.3-8b7cff?style=for-the-badge&labelColor=0d1221)
+![Version](https://img.shields.io/badge/версия-1.6.4-8b7cff?style=for-the-badge&labelColor=0d1221)
 ![Platform](https://img.shields.io/badge/Windows-10%2F11-5ee7d1?style=for-the-badge&labelColor=0d1221)
 ![Offline](https://img.shields.io/badge/работает-офлайн-63e6a6?style=for-the-badge&labelColor=0d1221)
 ![Made by](https://img.shields.io/badge/Created%20by-INTENSO.Dev-ff6680?style=for-the-badge&labelColor=0d1221)

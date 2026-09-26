@@ -214,7 +214,7 @@ var uiThread = new Thread(() =>
     {
         var window = new PhotinoWindow(null); // null parent → top-level window
         IntPtr windowHandle = IntPtr.Zero;
-        window.SetTitle("INT VoiceToText v1.3")
+        window.SetTitle($"INT VoiceToText v{AppState.AppVersion}")
               .SetUseOsDefaultSize(false)
               .SetSize(WinW, WinH)
               .SetMinSize(360, 100)
@@ -227,6 +227,7 @@ var uiThread = new Thread(() =>
             try
             {
                 windowHandle = W32.FindMainWindow();
+                W32.SetWindowIcon(windowHandle, Path.Combine(AppContext.BaseDirectory, "icon.ico"));
                 try { File.AppendAllText(Path.Combine(AppContext.BaseDirectory, "int_voicetext_debug.log"), $"CREATED hwnd={windowHandle}\n"); } catch { }
                 var wa = W32.GetWorkArea();
                 window.MoveTo(wa.Right - WinW - 24, wa.Top + 24, true);
