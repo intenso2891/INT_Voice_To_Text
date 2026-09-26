@@ -17,6 +17,15 @@ namespace INTVoiceToText.Services;
 public sealed class SpeechService : IDisposable
 {
     private const string ModelFileName = "ggml-large-v3";
+    private const long LargeV3Bytes = 3_095_033_483;
+    public event Action<ModelProgress>? ProgressChanged;
+    public bool IsDownloading { get; private set; }
+    public ModelProgress Progress { get; private set; } = new(0, LargeV3Bytes, false);
+
+    public sealed record ModelProgress(long Bytes, long TotalBytes, bool Completed)
+    {
+        public int Percent => TotalBytes > 0 ? Math.Clamp((int)(Bytes * 100L / TotalBytes), 0, 100) : 0;
+    }
     private readonly object _gate = new();
     private readonly SemaphoreSlim _modelGate = new(1, 1);
     private WhisperFactory? _factory;
@@ -62,6 +71,8 @@ public sealed class SpeechService : IDisposable
                 if (bin != null)
                 {
                     ModelPath = bin;
+                    Progress = Progress with { Bytes = LargeV3Bytes, Completed = true };
+                    ProgressChanged?.Invoke(Progress);
                     return bin;
                 }
             }
@@ -76,24 +87,48 @@ public sealed class SpeechService : IDisposable
             if (FileValid(targetPath))
             {
                 ModelPath = targetPath;
+                Progress = Progress with { Bytes = LargeV3Bytes, Completed = true };
+                ProgressChanged?.Invoke(Progress);
                 return targetPath;
             }
             File.Delete(targetPath); // corrupt/partial leftover → re-download
 
             // Atomic download: write to .part first so a crash can't leave a fake model.
             var partPath = targetPath + ".downloading";
-            using var stream = await WhisperGgmlDownloader.Default.GetGgmlModelAsync(
-                GgmlType.LargeV3, QuantizationType.NoQuantization, ct).ConfigureAwait(false);
+            IsDownloading = true;
+            ProgressChanged?.Invoke(Progress with { Bytes = 0, Completed = false });
+            try
+            {
+                using var stream = await WhisperGgmlDownloader.Default.GetGgmlModelAsync(
+                    GgmlType.LargeV3, QuantizationType.NoQuantization, ct).ConfigureAwait(false);
 
-            using (var file = File.Create(partPath))
-                await stream.CopyToAsync(file, ct).ConfigureAwait(false);
+                using (var file = new FileStream(partPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+                {
+                    var buffer = new byte[128 * 1024];
+                    int read;
+                    while ((read = await stream.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                    {
+                        await file.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                        Progress = Progress with { Bytes = file.Length };
+                        ProgressChanged?.Invoke(Progress);
+                    }
+                    await file.FlushAsync(ct).ConfigureAwait(false);
+                }
 
-            if (!FileValid(partPath)) throw new IOException("Downloaded model failed the integrity check.");
-            if (File.Exists(targetPath)) File.Delete(targetPath);
-            File.Move(partPath, targetPath);
+                if (!FileValid(partPath)) throw new IOException("Downloaded model failed the integrity check.");
+                if (File.Exists(targetPath)) File.Delete(targetPath);
+                File.Move(partPath, targetPath);
 
-            ModelPath = targetPath;
-            return targetPath;
+                ModelPath = targetPath;
+                Progress = Progress with { Bytes = LargeV3Bytes, Completed = true };
+                ProgressChanged?.Invoke(Progress);
+                return targetPath;
+            }
+            finally
+            {
+                IsDownloading = false;
+                try { if (File.Exists(partPath)) File.Delete(partPath); } catch { }
+            }
         }
         finally
         {
@@ -122,6 +157,7 @@ public sealed class SpeechService : IDisposable
     /// <summary>Transcribe float32 16 kHz mono samples into text (Whisper, local).</summary>
     public async Task<string> TranscribeAsync(float[] samples, string language, CancellationToken ct = default)
     {
+        if (IsDownloading) throw new InvalidOperationException("MODEL_DOWNLOADING");
         if (!IsReady) await EnsureModelAsync(ct);
         if (string.IsNullOrEmpty(ModelPath)) throw new InvalidOperationException("STT model is not available.");
 

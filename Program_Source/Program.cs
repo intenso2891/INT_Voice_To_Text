@@ -79,6 +79,8 @@ app.MapGet("/api/state", () => Results.Ok(new
     minimizeToTrayOnClose = state.MinimizeToTrayOnClose,
     debugMode = state.DebugMode,
     modelReady = engine.ModelReady,
+     modelDownloading = engine.ModelDownloading,
+     modelProgress = new { bytes = engine.ModelProgress.Bytes, totalBytes = engine.ModelProgress.TotalBytes, percent = engine.ModelProgress.Percent, completed = engine.ModelProgress.Completed },
 }));
 
 app.MapGet("/api/debug/log", () =>

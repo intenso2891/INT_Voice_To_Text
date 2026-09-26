@@ -19,6 +19,8 @@ export interface AppStateDto {
   computeMode: string; // "cpu" | "gpu" | "hybrid"
   gpuDevice: number;
   modelReady: boolean;
+  modelDownloading: boolean;
+  modelProgress: { bytes: number; totalBytes: number; percent: number; completed: boolean };
 }
 
 export interface ResultPayload {
@@ -49,6 +51,7 @@ export class Backend {
   onLevel?: (level: number) => void;
   onDebug?: (line: string) => void;
   onUpdate?: (update: UpdatePayload) => void;
+  onModelProgress?: (progress: AppStateDto["modelProgress"]) => void;
 
   async connect(): Promise<void> {
     if (this.connection && this.connection.state === "Connected") return;
@@ -64,6 +67,7 @@ export class Backend {
     conn.on("level", (payload: { level: number }) => this.onLevel?.(payload.level));
     conn.on("debug", (payload: { line: string }) => this.onDebug?.(payload.line));
     conn.on("update", (payload: UpdatePayload) => this.onUpdate?.(payload));
+    conn.on("modelProgress", (payload: AppStateDto["modelProgress"]) => this.onModelProgress?.(payload));
 
     try {
       await conn.start();

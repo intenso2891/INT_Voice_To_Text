@@ -229,6 +229,7 @@ export default function App() {
   const [overlayText, setOverlayText] = useState<string | null>(null);
   const [availableUpdate, setAvailableUpdate] = useState<UpdatePayload | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [modelProgress, setModelProgress] = useState({ bytes: 0, totalBytes: 3095033483, percent: 0, completed: false });
   const [history, setHistory] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("intvtt_history") ?? "[]") as string[]; } catch { return []; }
   });
@@ -249,7 +250,7 @@ export default function App() {
     (async () => {
       try {
         const st = await backend.getState();
-        if (!disposed) setInfo(st);
+        if (!disposed) { setInfo(st); setModelProgress(st.modelProgress); }
         setStatus(st.status === "idle" ? "idle" : st.status);
         if (st.status === "recording") setOverlay("recording");
         else if (st.status === "transcribing") setOverlay("transcribing");
@@ -276,11 +277,14 @@ export default function App() {
         };
         backend.onError = (msg) => {
           const friendly = msg.startsWith("TOO_SHORT") ? t("tooShort")
+            : msg.startsWith("MODEL_DOWNLOADING") ? t("modelBusy")
+            : msg.startsWith("MODEL_NOT_READY") ? t("modelNotReady")
             : msg.startsWith("MICROPHONE_ERROR") || msg.includes("NoDefault") ? t("errorMic")
             : msg.replace(/^[A-Z_]+:\s*/, "");
           setError(friendly);
         };
         backend.onUpdate = (u) => setAvailableUpdate(u);
+        backend.onModelProgress = (p) => setModelProgress(p);
 
         await backend.connect();
         try {
@@ -301,6 +305,12 @@ export default function App() {
     })();
     return () => { disposed = true; };
   }, [t]);
+
+  const formatBytes = (n: number) => {
+    if (!n) return "0 МБ";
+    const mb = n / (1024 * 1024);
+    return mb >= 1024 ? `${(mb / 1024).toFixed(2)} ГБ` : `${Math.round(mb)} МБ`;
+  };
 
   const toggleLanguage = useCallback(() => {
     const next = i18n.language === "ru" ? "en" : "ru";
@@ -556,9 +566,14 @@ export default function App() {
           <div className="model-row">
             <span className="row-label"><WifiOff size={15} /> {t("modelTitle")}</span>
             <Tip text={t("modelHint")} />
-            <small className={"model-status" + (info.modelReady ? " ready" : "")}>
-              {info.modelReady ? t("modelReady") : t("modelDownloading")}
-            </small>
+            <small className={"model-status" + (info.modelReady ? " ready" : "")}>{info.modelReady ? t("modelReady") : info.modelDownloading ? t("modelDownloading") : t("modelNotReady")}</small>
+            {!info.modelReady && (
+              <div className="model-progress-wrap">
+                <div className="model-progress-track"><div className="model-progress-fill" style={{ width: `${modelProgress.percent}%` }} /></div>
+                <span className="model-progress-label">{modelProgress.percent}% · {formatBytes(modelProgress.bytes)} / {formatBytes(modelProgress.totalBytes)}</span>
+              </div>
+            )}
+            {info.modelReady && modelProgress.completed && <small className="model-status ready">{t("modelCompleted")}</small>}
           </div>
 
           <footer className="ver">

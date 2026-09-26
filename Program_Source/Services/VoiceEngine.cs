@@ -55,6 +55,7 @@ public sealed class VoiceEngine : IDisposable
         _recorder.Configure(state.MicrophoneDevice, state.MicrophoneSensitivity);
         _speech.ConfigureCompute(state.ComputeMode, state.GpuDevice);
         _recorder.LevelAvailable += level => Broadcast("level", new { level });
+        _speech.ProgressChanged += progress => Broadcast("modelProgress", new { bytes = progress.Bytes, totalBytes = progress.TotalBytes, percent = progress.Percent, completed = progress.Completed });
     }
 
     /// <summary>Start hotkey hosting. Call once after the hub context is wired.</summary>
@@ -107,6 +108,13 @@ public sealed class VoiceEngine : IDisposable
 
     private void BeginRecording()
     {
+        if (!_speech.IsReady)
+        {
+            _lastError = _speech.IsDownloading ? "MODEL_DOWNLOADING: Модель ещё скачивается — дождитесь окончания загрузки" : "MODEL_NOT_READY: Модель распознавания ещё не готова";
+            Broadcast("error", new { message = _lastError });
+            DebugLog("RECORD_REJECTED " + _lastError);
+            return;
+        }
         DebugLog($"RECORD_START device={_state.MicrophoneDevice} sensitivity={_state.MicrophoneSensitivity:0.00}");
         try { _recorder.Start(); }
         catch (Exception ex)
@@ -187,7 +195,7 @@ public sealed class VoiceEngine : IDisposable
         catch (Exception ex)
         {
             DebugLog("TRANSCRIBE_ERROR " + ex);
-            _lastError = "TRANSCRIBE_ERROR: " + ex.Message;
+            _lastError = ex.Message.StartsWith("MODEL_DOWNLOADING") ? "MODEL_DOWNLOADING: Модель ещё скачивается — дождитесь окончания загрузки" : "TRANSCRIBE_ERROR: " + ex.Message;
             Broadcast("error", new { message = _lastError });
         }
         finally
@@ -219,6 +227,12 @@ public sealed class VoiceEngine : IDisposable
 
     /// <summary>Current model status for the settings panel.</summary>
     public bool ModelReady => _speech.IsReady;
+
+    /// <summary>True while the large model is being downloaded for the first time.</summary>
+    public bool ModelDownloading => _speech.IsDownloading;
+
+    /// <summary>Bytes/progress of the ongoing (or completed) model download.</summary>
+    public SpeechService.ModelProgress ModelProgress => _speech.Progress;
 
     /// <summary>Prefetch/locate the STT model (called at startup, non-blocking).</summary>
     public Task WarmupModelAsync() => _speech.EnsureModelAsync();
