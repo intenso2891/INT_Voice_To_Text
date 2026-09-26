@@ -24,6 +24,7 @@ internal static class Program
     [STAThread]
     public static async Task Main(string[] args)
     {
+        if (!PrerequisiteChecker.Ensure()) return;
         var state = AppState.Load();
         state.StartWithWindows = StartupManager.IsEnabled();
 

@@ -36,6 +36,8 @@
     <Content Include="models\ggml-base.bin" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" Condition="Exists('models\ggml-base.bin')" />
     <Content Include="models\ggml-large-v3.bin" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" Condition="Exists('models\ggml-large-v3.bin')" />
     <Content Include="library_words\words.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <Content Include="Install-Requirements.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <Content Include="Install-Requirements.bat" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
     <!-- React app embedded as assembly resources → works even with a lone .exe -->
     <EmbeddedResource Include="wwwroot\**" Condition="Exists('wwwroot\index.html')" />
   </ItemGroup>
