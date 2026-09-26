@@ -31,6 +31,9 @@ try
     foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
     {
         var destination = file.Replace(source, target);
+        // The updater itself is running from the target directory and is locked.
+        // Keep the old helper; it can update itself on a later manual install.
+        if (string.Equals(Path.GetFileName(destination), "INT_VoiceToText.Updater.exe", StringComparison.OrdinalIgnoreCase)) continue;
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         File.Copy(file, destination, true);
     }
