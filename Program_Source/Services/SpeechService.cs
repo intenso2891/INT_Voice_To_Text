@@ -55,6 +55,16 @@ public sealed class SpeechService : IDisposable
         {
             if (!string.IsNullOrEmpty(ModelPath)) return ModelPath;
 
+            // Clean up stale .downloading files from previous crashed downloads.
+            try
+            {
+                var staleDir = Path.Combine(ExeDir(), "models");
+                if (Directory.Exists(staleDir))
+                    foreach (var f in Directory.EnumerateFiles(staleDir, "*.downloading"))
+                        try { File.Delete(f); } catch { }
+            }
+            catch { }
+
             var candidates = new List<string>
             {
                 Path.Combine(AppContext.BaseDirectory, "models"),                       // shipped / embedded
@@ -92,10 +102,11 @@ public sealed class SpeechService : IDisposable
                 ProgressChanged?.Invoke(Progress);
                 return targetPath;
             }
-            File.Delete(targetPath); // corrupt/partial leftover → re-download
+            // Corrupt/partial leftover → delete so we can re-download.
+            try { File.Delete(targetPath); } catch { }
 
-            // Atomic download: write to .part first so a crash can't leave a fake model.
-            var partPath = targetPath + ".downloading";
+            // Atomic download: write to a UNIQUE temp file so two processes never collide.
+            var partPath = targetPath + $".{Environment.ProcessId}.{Guid.NewGuid():N}.downloading";
             try { _crossProcessDownload.WaitOne(); } catch (AbandonedMutexException) { }
             try
             {
@@ -137,7 +148,7 @@ public sealed class SpeechService : IDisposable
             finally
             {
                 IsDownloading = false;
-                try { if (File.Exists(partPath)) File.Delete(partPath); } catch { }
+                try { File.Delete(partPath); } catch { }
                 try { _crossProcessDownload.ReleaseMutex(); } catch { }
             }
         }

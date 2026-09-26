@@ -62,12 +62,47 @@ jobs:
           Copy-Item Program_Source\icon.ico,Program_Source\tray-blue.ico,Program_Source\tray-green.ico Program -Force
           Copy-Item Program_Source\library_words\words.txt Program\library_words\words.txt -Force
           Copy-Item Program_Source\Install-Requirements.ps1,Program_Source\Install-Requirements.bat Program -Force
-          # Native Whisper runtimes (CPU/CUDA/Vulkan) MUST sit beside the exe — SingleFile publish omits them.
-          $rt = 'Program_Source\bin\Release\net9.0-windows\win-x64\runtimes'
-          if (Test-Path $rt) { Copy-Item $rt Program\runtimes -Recurse -Force }
-          $bin = 'Program_Source\bin\Release\net9.0-windows\win-x64'
+          # ── Native Whisper DLLs (CRITICAL) ──
+          # SingleFile bundles them inside the exe, but Whisper.net searches beside the exe.
+          # Source 1: build intermediate (dotnet publish preserves bin/Release)
+          $binDir = 'Program_Source\bin\Release\net9.0-windows\win-x64'
+          $rtDir  = "$binDir\runtimes"
+          if (Test-Path $rtDir) { Copy-Item $rtDir Program\runtimes -Recurse -Force }
           foreach ($d in 'whisper.dll','ggml-whisper.dll','ggml-base-whisper.dll','ggml-cpu-whisper.dll') {
-            if (Test-Path "$bin\$d") { Copy-Item "$bin\$d" Program -Force }
+            if (Test-Path "$binDir\$d") { Copy-Item "$binDir\$d" Program -Force }
+          }
+          # Source 2: NuGet cache — copy native DLLs to BOTH root and runtimes/win-x64/native/
+          $nugetCache = ((dotnet nuget locals global-packages --list) -replace 'global-packages:\s*','').Trim()
+          $whisperPkgs = @('whisper.net.runtime','whisper.net.runtime.cuda','whisper.net.runtime.cuda12','whisper.net.runtime.vulkan','whisper.net.runtime.noavx')
+          # Whisper.net looks for DLLs in runtimes/win-x64/native/ (standard .NET convention)
+          $nativeDir = 'Program\runtimes\win-x64\native'
+          New-Item -ItemType Directory -Force $nativeDir | Out-Null
+          foreach ($pkg in $whisperPkgs) {
+            $buildDir = Join-Path $nugetCache "$pkg\1.9.1\build\win-x64"
+            if (Test-Path $buildDir) {
+              Copy-Item "$buildDir\*.dll" $nativeDir -Force
+              Write-Host "Copied native DLLs from $pkg -> runtimes/win-x64/native/"
+            }
+          }
+          # Also copy full runtimes tree from allruntimes package (CUDA, Vulkan, etc.)
+          $allrt = Join-Path $nugetCache 'whisper.net.allruntimes\1.9.1'
+          if (Test-Path $allrt) {
+            Get-ChildItem $allrt -Directory -Filter 'runtimes' -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+              Copy-Item $_.FullName Program\runtimes -Recurse -Force
+            }
+          }
+          # Re-copy native DLLs to the canonical path (overwrite if allruntimes overwrote them)
+          foreach ($pkg in $whisperPkgs) {
+            $buildDir = Join-Path $nugetCache "$pkg\1.9.1\build\win-x64"
+            if (Test-Path $buildDir) { Copy-Item "$buildDir\*.dll" $nativeDir -Force }
+          }
+          # Also copy CPU runtime DLLs to Program root (Whisper.net fallback search path)
+          $cpuBuild = Join-Path $nugetCache 'whisper.net.runtime\1.9.1\build\win-x64'
+          if (Test-Path $cpuBuild) { Copy-Item "$cpuBuild\*.dll" Program -Force }
+          # Verify critical DLLs exist
+          $critical = @('whisper.dll','ggml-whisper.dll','ggml-base-whisper.dll','ggml-cpu-whisper.dll')
+          foreach ($c in $critical) {
+            if (-not (Test-Path "Program\$c")) { throw "MISSING critical native DLL: $c" }
           }
           Remove-Item Program\*.pdb -Force -ErrorAction SilentlyContinue
           Remove-Item Program\models -Recurse -Force -ErrorAction SilentlyContinue
