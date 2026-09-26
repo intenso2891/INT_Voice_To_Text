@@ -171,8 +171,10 @@ app.MapPost("/api/update/install", async (UpdateInstallBody body) =>
         var updaterExe = Path.Combine(target, "INT_VoiceToText.Updater.exe");
         if (!File.Exists(updaterExe)) return Results.NotFound(new { error = "UPDATER_NOT_INSTALLED" });
         var exe = Environment.ProcessPath ?? Path.Combine(target, "INT_VoiceToText.exe");
+        try { File.AppendAllText(Path.Combine(AppContext.BaseDirectory, "int_voicetext_debug.log"), $"UPDATE_START target={target} zip={zip}\n"); } catch { }
         Process.Start(new ProcessStartInfo(updaterExe, $"--pid {Environment.ProcessId} --zip \"{zip}\" --target \"{target}\" --exe \"{exe}\"") { WorkingDirectory = target, UseShellExecute = true });
-        _ = Task.Run(async () => { await Task.Delay(500); Environment.Exit(0); });
+        // Give the Updater time to start and begin extraction before we kill this process.
+        _ = Task.Run(async () => { await Task.Delay(3000); Environment.Exit(0); });
         return Results.Ok(new { started = true });
     }
     catch (Exception ex) { return Results.Problem(ex.Message); }
