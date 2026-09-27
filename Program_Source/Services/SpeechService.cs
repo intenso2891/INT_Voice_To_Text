@@ -323,108 +323,6 @@ public sealed class SpeechService : IDisposable
 
     private static bool _nativeDeployed;
     private static readonly object _nativeLock = new();
-    private static bool _resolverSet;
-
-    // Win32: add a directory to the process DLL search path.
-    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-    private static extern IntPtr AddDllDirectory(string lpPathName);
-
-    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool SetDefaultDllDirectories(uint directoryFlags);
-
-    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-    private static extern IntPtr LoadLibraryEx(string lpLibFileName, IntPtr hFile, uint dwFlags);
-
-    private const uint LOAD_LIBRARY_SEARCH_USER_DIRS = 0x00000400;
-    private const uint LOAD_LIBRARY_SEARCH_SYSTEM32 = 0x00000800;
-    private const uint LOAD_LIBRARY_SEARCH_APPLICATION_DIR = 0x00000200;
-    private const uint LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR = 0x00000100;
-
-    /// <summary>
-    /// THE definitive fix: add the exe folder to the process PATH environment variable.
-    ///
-    /// Root cause: PublishSingleFile extracts managed code to %TEMP%\.net\...,
-    /// so Whisper.net's NativeLibraryLoader searches the temp dir and can't find
-    /// whisper.dll / ggml-*.dll sitting next to the exe.
-    ///
-    /// Adding exeDir to PATH makes LoadLibrary("whisper.dll") find it everywhere.
-    /// This is the most fundamental fix — it works regardless of how Whisper.net
-    /// loads the library (NativeLibrary.TryLoad, LoadLibrary, or P/Invoke).
-    /// </summary>
-    private static void EnsureNativeResolver()
-    {
-        if (_resolverSet) return;
-        lock (_nativeLock)
-        {
-            if (_resolverSet) return;
-            var exeDir = ExeDir();
-            var nativeDir = Path.Combine(exeDir, "runtimes", "win-x64", "native");
-
-            // PRIMARY FIX: add exe folder to PATH so LoadLibrary("whisper.dll") works
-            try
-            {
-                var currentPath = Environment.GetEnvironmentVariable("PATH") ?? "";
-                var sep = Path.PathSeparator.ToString();
-                if (!currentPath.Contains(exeDir, StringComparison.OrdinalIgnoreCase))
-                {
-                    Environment.SetEnvironmentVariable("PATH", exeDir + sep + nativeDir + sep + currentPath);
-                }
-            }
-            catch { }
-
-            // SECONDARY: AddDllDirectory as extra insurance
-            try
-            {
-                SetDefaultDllDirectories(
-                    LOAD_LIBRARY_SEARCH_USER_DIRS |
-                    LOAD_LIBRARY_SEARCH_SYSTEM32 |
-                    LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
-                    LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR);
-                AddDllDirectory(exeDir);
-                AddDllDirectory(nativeDir);
-            }
-            catch { }
-
-            // TERTIARY: pre-load each DLL by full path
-            string[] dlls = { "ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-whisper.dll", "ggml-vulkan-whisper.dll", "whisper.dll" };
-            foreach (var dll in dlls)
-            {
-                foreach (var dir in new[] { nativeDir, exeDir })
-                {
-                    var path = Path.Combine(dir, dll);
-                    if (File.Exists(path))
-                    {
-                        try { LoadLibraryEx(path, IntPtr.Zero, 0); } catch { }
-                        break;
-                    }
-                }
-            }
-
-            // QUATERNARY: DllImportResolver
-            try
-            {
-                System.Runtime.InteropServices.NativeLibrary.SetDllImportResolver(
-                    typeof(WhisperFactory).Assembly,
-                    (name, assembly, searchPath) =>
-                    {
-                        foreach (var dir in new[] { nativeDir, exeDir })
-                        {
-                            var candidate = Path.Combine(dir, name + ".dll");
-                            if (File.Exists(candidate))
-                            {
-                                try { return System.Runtime.InteropServices.NativeLibrary.Load(candidate); }
-                                catch { }
-                            }
-                        }
-                        return IntPtr.Zero;
-                    });
-            }
-            catch (InvalidOperationException) { }
-            catch { }
-
-            _resolverSet = true;
-        }
-    }
 
     /// <summary>
     /// Deploy native Whisper DLLs to the EXACT paths Whisper.net searches.
@@ -433,12 +331,10 @@ public sealed class SpeechService : IDisposable
     ///   runtimePath = Path.Combine(assemblySearchPath, "runtimes", "win-x64")
     ///   whisperPath = Path.Combine(runtimePath, "whisper.dll")
     ///
-    /// So DLLs must be in <searchPath>/runtimes/win-x64/ (NOT runtimes/win-x64/native/!)
-    /// assemblySearchPaths include: AppDomain.BaseDirectory, exe directory, etc.
+    /// So DLLs must be in &lt;searchPath&gt;/runtimes/win-x64/ (NOT runtimes/win-x64/native/!)
     /// </summary>
     public static string DeployNativeLibraries()
     {
-        EnsureNativeResolver();
         lock (_nativeLock)
         {
             var exeDir = ExeDir();
@@ -451,24 +347,16 @@ public sealed class SpeechService : IDisposable
             // 2. Exe directory (from GetCommandLineArgs)
             // 3. Assembly.Location directory
             var searchBases = new List<string> { AppContext.BaseDirectory, exeDir };
-            if (!string.IsNullOrEmpty(System.Reflection.Assembly.GetEntryAssembly()?.Location))
-            {
-                var asmDir = Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly()!.Location);
-                if (asmDir != null) searchBases.Add(asmDir);
-            }
 
             foreach (var baseDir in searchBases.Distinct())
             {
-                // Whisper.net path: runtimes/win-x64/
                 var runtimeDir = Path.Combine(baseDir, "runtimes", "win-x64");
-                // Standard .NET path: runtimes/win-x64/native/
                 var nativeDir = Path.Combine(runtimeDir, "native");
                 Directory.CreateDirectory(runtimeDir);
                 Directory.CreateDirectory(nativeDir);
 
                 foreach (var dll in dlls)
                 {
-                    // Find source
                     string? src = null;
                     foreach (var srcDir in new[] { Path.Combine(exeDir, "runtimes", "win-x64"), Path.Combine(exeDir, "runtimes", "win-x64", "native"), exeDir })
                     {
@@ -477,7 +365,6 @@ public sealed class SpeechService : IDisposable
                     }
                     if (src == null) continue;
 
-                    // Copy to BOTH locations (Whisper.net + .NET convention)
                     foreach (var dst in new[] { Path.Combine(runtimeDir, dll), Path.Combine(nativeDir, dll) })
                     {
                         try
