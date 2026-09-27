@@ -269,12 +269,48 @@ public sealed class SpeechService : IDisposable
         catch { return false; }
     }
 
+    private static bool _nativeLoaded;
+    private static readonly object _nativeLock = new();
+
+    /// <summary>
+    /// Pre-load native Whisper DLLs before Whisper.net tries to find them.
+    /// With PublishSingleFile, AppContext.BaseDirectory points to a temp extraction dir,
+    /// so Whisper.net's NativeLibraryLoader searches the wrong location. We explicitly
+    /// load DLLs from the exe folder and runtimes/win-x64/native/ instead.
+    /// </summary>
+    private static void EnsureNativeLibrariesLoaded()
+    {
+        if (_nativeLoaded) return;
+        lock (_nativeLock)
+        {
+            if (_nativeLoaded) return;
+            var dir = ExeDir();
+            var nativeDir = Path.Combine(dir, "runtimes", "win-x64", "native");
+            string[] dlls = { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-vulkan-whisper.dll" };
+            foreach (var dll in dlls)
+            {
+                foreach (var searchDir in new[] { nativeDir, dir })
+                {
+                    var path = Path.Combine(searchDir, dll);
+                    if (File.Exists(path))
+                    {
+                        try { System.Runtime.InteropServices.NativeLibrary.Load(path); } catch { }
+                        break;
+                    }
+                }
+            }
+            _nativeLoaded = true;
+        }
+    }
+
     /// <summary>Transcribe float32 16 kHz mono samples into text (Whisper, local).</summary>
     public async Task<string> TranscribeAsync(float[] samples, string language, CancellationToken ct = default)
     {
         if (IsDownloading) throw new InvalidOperationException("MODEL_DOWNLOADING");
         if (!IsReady) await EnsureModelAsync(ct);
         if (string.IsNullOrEmpty(ModelPath)) throw new InvalidOperationException("STT model is not available.");
+
+        EnsureNativeLibrariesLoaded();
 
         lock (_gate)
         {
