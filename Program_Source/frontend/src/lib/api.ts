@@ -153,6 +153,18 @@ export class Backend {
     if (!res.ok) throw new Error("models/retry http " + res.status);
     return (await res.json()) as { ok: boolean; error?: string };
   }
+
+  async repairRuntime(): Promise<{ report: string; status: unknown }> {
+    const res = await fetch("/api/runtime/repair", { method: "POST" });
+    if (!res.ok) throw new Error("runtime/repair http " + res.status);
+    return (await res.json()) as { report: string; status: unknown };
+  }
+
+  async runtimeStatus(): Promise<unknown> {
+    const res = await fetch("/api/runtime/status");
+    if (!res.ok) throw new Error("runtime/status http " + res.status);
+    return await res.json();
+  }
 }
 
 export const backend = new Backend();

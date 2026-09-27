@@ -125,6 +125,7 @@ select { margin-left: auto; background: #10172b; color: var(--text); border: 1px
 .runtime-dll.ok { color: #63e6a6; background: rgba(99,230,166,.08); }
 .runtime-dll.missing { color: #ff6680; background: rgba(255,102,128,.08); font-weight: 600; }
 .runtime-dll small { color: var(--muted); font-weight: 400; }
+.runtime-report { font-size: 11px; margin: 6px 0 0; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,.03); color: var(--muted); white-space: pre-wrap; max-height: 120px; overflow-y: auto; font-family: "Cascadia Code", "Fira Code", monospace; }
 
 /* Retry button + model files */
 .retry-btn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(139,124,255,.4); border-radius: 7px; padding: 5px 10px; background: rgba(139,124,255,.12); color: var(--cyan); font-size: 12px; cursor: pointer; transition: background .15s; }

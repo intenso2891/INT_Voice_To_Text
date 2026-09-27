@@ -269,38 +269,88 @@ public sealed class SpeechService : IDisposable
         catch { return false; }
     }
 
-    private static bool _nativeLoaded;
+    private static bool _nativeDeployed;
     private static readonly object _nativeLock = new();
 
     /// <summary>
-    /// Pre-load native Whisper DLLs before Whisper.net tries to find them.
-    /// With PublishSingleFile, AppContext.BaseDirectory points to a temp extraction dir,
-    /// so Whisper.net's NativeLibraryLoader searches the wrong location. We explicitly
-    /// load DLLs from the exe folder and runtimes/win-x64/native/ instead.
+    /// Deploy native Whisper DLLs to locations where Whisper.net's NativeLibraryLoader will find them.
+    ///
+    /// The core problem: with PublishSingleFile, AppContext.BaseDirectory points to a TEMP
+    /// extraction dir (%TEMP%\.net\...), not the exe folder. Whisper.net searches:
+    ///   1. AppContext.BaseDirectory/runtimes/win-x64/native/
+    ///   2. AppContext.BaseDirectory/
+    ///   3. System PATH
+    /// DLLs physically sit next to the exe — we must COPY them to the temp dir.
     /// </summary>
-    private static void EnsureNativeLibrariesLoaded()
+    public static string DeployNativeLibraries()
     {
-        if (_nativeLoaded) return;
         lock (_nativeLock)
         {
-            if (_nativeLoaded) return;
-            var dir = ExeDir();
-            var nativeDir = Path.Combine(dir, "runtimes", "win-x64", "native");
+            var exeDir = ExeDir();
+            var targetBase = AppContext.BaseDirectory; // temp dir for single-file
+            var targetNative = Path.Combine(targetBase, "runtimes", "win-x64", "native");
+            Directory.CreateDirectory(targetNative);
+
+            var sourceNative = Path.Combine(exeDir, "runtimes", "win-x64", "native");
             string[] dlls = { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-vulkan-whisper.dll" };
+            var report = new System.Text.StringBuilder();
+            int deployed = 0, failed = 0;
+
             foreach (var dll in dlls)
             {
-                foreach (var searchDir in new[] { nativeDir, dir })
+                // Find source
+                string? src = null;
+                foreach (var dir in new[] { sourceNative, exeDir })
                 {
-                    var path = Path.Combine(searchDir, dll);
-                    if (File.Exists(path))
-                    {
-                        try { System.Runtime.InteropServices.NativeLibrary.Load(path); } catch { }
-                        break;
-                    }
+                    var p = Path.Combine(dir, dll);
+                    if (File.Exists(p)) { src = p; break; }
                 }
+                if (src == null) { report.Append($"  ✗ {dll}: not found in exe folder\n"); failed++; continue; }
+
+                // Deploy to BOTH target locations
+                var ok = true;
+                foreach (var dst in new[] { Path.Combine(targetNative, dll), Path.Combine(targetBase, dll) })
+                {
+                    try
+                    {
+                        if (!File.Exists(dst) || new FileInfo(dst).Length != new FileInfo(src).Length)
+                            File.Copy(src, dst, true);
+                    }
+                    catch (Exception ex) { ok = false; report.Append($"  ✗ {dll}: copy failed — {ex.Message}\n"); }
+                }
+                if (ok) { deployed++; }
+                else failed++;
             }
-            _nativeLoaded = true;
+
+            _nativeDeployed = true;
+            report.Insert(0, $"Deployed {deployed}/{dlls.Length} native DLLs → {targetBase}\n");
+            return report.ToString();
         }
+    }
+
+    /// <summary>Check native library status (for diagnostics).</summary>
+    public static object GetNativeLibraryStatus()
+    {
+        var exeDir = ExeDir();
+        var targetBase = AppContext.BaseDirectory;
+        var sourceNative = Path.Combine(exeDir, "runtimes", "win-x64", "native");
+        var targetNative = Path.Combine(targetBase, "runtimes", "win-x64", "native");
+        string[] dlls = { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-vulkan-whisper.dll" };
+        var items = new List<object>();
+        foreach (var dll in dlls)
+        {
+            bool inExeDir = File.Exists(Path.Combine(exeDir, dll));
+            bool inExeNative = File.Exists(Path.Combine(sourceNative, dll));
+            bool inTempDir = File.Exists(Path.Combine(targetBase, dll));
+            bool inTempNative = File.Exists(Path.Combine(targetNative, dll));
+            long size = 0;
+            foreach (var p in new[] { Path.Combine(sourceNative, dll), Path.Combine(exeDir, dll) })
+            {
+                if (File.Exists(p)) { size = new FileInfo(p).Length; break; }
+            }
+            items.Add(new { name = dll, inExeDir, inExeNative, inTempDir, inTempNative, sizeKB = size / 1024 });
+        }
+        return new { exeDir, tempDir = targetBase, deployed = _nativeDeployed, dlls = items };
     }
 
     /// <summary>Transcribe float32 16 kHz mono samples into text (Whisper, local).</summary>
@@ -310,7 +360,7 @@ public sealed class SpeechService : IDisposable
         if (!IsReady) await EnsureModelAsync(ct);
         if (string.IsNullOrEmpty(ModelPath)) throw new InvalidOperationException("STT model is not available.");
 
-        EnsureNativeLibrariesLoaded();
+        DeployNativeLibraries();
 
         lock (_gate)
         {

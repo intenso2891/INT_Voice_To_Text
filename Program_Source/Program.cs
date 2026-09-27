@@ -87,6 +87,15 @@ app.MapGet("/api/state", () => Results.Ok(new
 
 app.MapGet("/api/runtime/diagnostics", () => Results.Ok(VoiceEngine.GetRuntimeDiagnostics()));
 
+app.MapGet("/api/runtime/status", () => Results.Ok(SpeechService.GetNativeLibraryStatus()));
+
+app.MapPost("/api/runtime/repair", () =>
+{
+    var report = SpeechService.DeployNativeLibraries();
+    var status = SpeechService.GetNativeLibraryStatus();
+    return Results.Ok(new { report, status });
+});
+
 app.MapGet("/api/models", () => Results.Ok(VoiceEngine.GetModelList()));
 
 app.MapPost("/api/models/retry", async () =>

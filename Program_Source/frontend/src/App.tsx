@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   AudioLines, Check, Clipboard, Copy, Cpu, HelpCircle, Keyboard, Languages, Loader2, Mic,
-  Settings2, Square, Trash2, VolumeX, WifiOff,
+  Settings2, Square, Trash2, VolumeX, WifiOff, Wrench,
 } from "lucide-react";
 import i18n, { setAppLanguage } from "./i18n";
 import { backend, hotkeyLabel, type AppStateDto, type ResultPayload, type UpdatePayload, type Backend as BackendType, type ModelFile } from "./lib/api";
@@ -257,6 +257,7 @@ export default function App() {
   const [result, setResult] = useState<ResultPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<AppStateDto | null>(null);
+  const [runtimeRepairReport, setRuntimeRepairReport] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [copied, setCopied] = useState(false);
   const [seconds, setSeconds] = useState(0);
@@ -657,6 +658,19 @@ export default function App() {
                   {info.runtime.runtimesDirExists ? "✓" : "✗"} runtimes/win-x64/native/
                 </span>
               </div>
+              {/* Repair button — deploys DLLs to the correct search paths */}
+              <button className="retry-btn" style={{marginTop: 6}} onClick={async () => {
+                try {
+                  const r = await backend.repairRuntime();
+                  setRuntimeRepairReport(r.report);
+                  setInfo(prev => prev ? { ...prev } : prev);
+                } catch (e) {
+                  setRuntimeRepairReport("Error: " + (e as Error).message);
+                }
+              }}>
+                <Wrench size={13} /> {t("runtimeRepair")}
+              </button>
+              {runtimeRepairReport && <pre className="runtime-report">{runtimeRepairReport}</pre>}
             </div>
           )}
 
