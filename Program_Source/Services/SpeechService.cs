@@ -245,7 +245,7 @@ public sealed class SpeechService : IDisposable
         {
             if (!File.Exists(path)) return false;
             var info = new FileInfo(path);
-            if (info.Length < 1_000_000) return false; // ggml-base is ~148 MB — reject truncated junk
+            if (info.Length < 1_000_000) return false;
 
             var header = new byte[4];
             using var fs = File.OpenRead(path);
