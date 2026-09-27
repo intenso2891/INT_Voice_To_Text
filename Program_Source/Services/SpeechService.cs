@@ -96,6 +96,17 @@ public sealed class SpeechService : IDisposable
     {
         lock (_gate)
         {
+            // NVIDIA mode requires CUDA Toolkit — warn if not available
+            if ((mode == "gpu-nvidia" || mode == "hybrid-nvidia") && !IsCudaAvailable())
+            {
+                LastError = "CUDA_NOT_FOUND: CUDA Toolkit не установлен. Скачайте с https://developer.nvidia.com/cuda-downloads или выберите CPU.";
+                _useGpu = false;
+                _gpuBackend = "none";
+                _factory?.Dispose();
+                _factory = null;
+                return;
+            }
+
             _gpuBackend = mode switch
             {
                 "gpu-nvidia" => "cuda",
@@ -449,7 +460,11 @@ public sealed class SpeechService : IDisposable
         lock (_nativeLock)
         {
             var exeDir = ExeDir();
-            string[] dlls = { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-vulkan-whisper.dll", "ggml-cuda-whisper.dll" };
+            // CUDA DLL only if CUDA Toolkit is installed — otherwise ucrtbase fail-fast crash (c0000409)
+            var cudaAvailable = IsCudaAvailable();
+            string[] dlls = cudaAvailable
+                ? new[] { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-vulkan-whisper.dll", "ggml-cuda-whisper.dll" }
+                : new[] { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-vulkan-whisper.dll" };
             var report = new System.Text.StringBuilder();
             int deployed = 0;
 
@@ -593,6 +608,31 @@ public sealed class SpeechService : IDisposable
     }
 
     /// <summary>Directory of the running executable (works with single-file publish).</summary>
+    /// <summary>Check if CUDA Toolkit is installed (cudart64_*.dll in system32 or CUDA_PATH set).</summary>
+    private static bool IsCudaAvailable()
+    {
+        // Check CUDA_PATH environment variable
+        var cudaPath = Environment.GetEnvironmentVariable("CUDA_PATH");
+        if (!string.IsNullOrEmpty(cudaPath) && Directory.Exists(cudaPath)) return true;
+
+        // Check for cudart64_*.dll in System32 (installed by CUDA Toolkit or NVIDIA driver)
+        try
+        {
+            var sys32 = Environment.SystemDirectory;
+            if (Directory.EnumerateFiles(sys32, "cudart64_*.dll").Any()) return true;
+        }
+        catch { }
+
+        // Check common CUDA Toolkit installation paths
+        foreach (var ver in new[] { "v13.0", "v12.6", "v12.5", "v12.4", "v12.3", "v12.2", "v12.1", "v12.0", "v11.8" })
+        {
+            var p = $@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\{ver}\bin\cudart64_*.dll";
+            try { if (Directory.EnumerateFiles(Path.GetDirectoryName(p)!, Path.GetFileName(p)).Any()) return true; } catch { }
+        }
+
+        return false;
+    }
+
     private static string ExeDir()
     {
         var exe = Environment.ProcessPath;

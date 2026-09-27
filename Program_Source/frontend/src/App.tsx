@@ -126,6 +126,12 @@ function ModelCatalog({ backend }: { backend: BackendType }) {
                   {t("modelSelect")}
                 </button>
               )}
+              {m.installed && downloading !== m.id && (
+                <button className="retry-btn" style={{margin: 0, fontSize: 11, opacity: 0.7}}
+                  onClick={() => download(m.id)}>
+                  {t("modelRedownload")}
+                </button>
+              )}
               {!m.installed && downloading !== m.id && (
                 <button className="retry-btn" style={{margin: 0, fontSize: 11}} disabled={downloading !== null}
                   onClick={() => download(m.id)}>
