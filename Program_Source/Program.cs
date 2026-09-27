@@ -115,6 +115,12 @@ app.MapGet("/api/models", () => Results.Ok(VoiceEngine.GetModelList()));
 
 app.MapGet("/api/models/catalog", () => Results.Ok(SpeechService.GetModelCatalog()));
 
+app.MapPost("/api/models/select", (DownloadModelBody body) =>
+{
+    var result = SpeechService.SelectModel(body.modelId);
+    return Results.Ok(result);
+});
+
 app.MapPost("/api/models/delete", () => Results.Ok(SpeechService.DeleteAllModels()));
 
 app.MapPost("/api/models/download", (DownloadModelBody body) =>

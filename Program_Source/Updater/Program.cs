@@ -58,7 +58,21 @@ for (int attempt = 1; attempt <= maxRetries; attempt++)
         var extract = Path.Combine(Path.GetTempPath(), "INT_VoiceToText-update-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(extract);
         Log($"Extracting ZIP to {extract}...");
-        ZipFile.ExtractToDirectory(zip, extract);
+
+        // Copy ZIP to a local temp file first — the original may be locked by antivirus
+        var localZip = Path.Combine(extract, "update.zip");
+        try
+        {
+            File.Copy(zip, localZip, true);
+            Log($"Copied ZIP to local temp: {localZip}");
+        }
+        catch (Exception ex)
+        {
+            Log($"ZIP copy failed ({ex.Message}), trying original...");
+            localZip = zip;
+        }
+
+        ZipFile.ExtractToDirectory(localZip, extract);
         Log($"Extracted OK. Contents: {Directory.GetFiles(extract, "*", SearchOption.AllDirectories).Length} files");
 
         var source = Directory.Exists(Path.Combine(extract, "Program")) ? Path.Combine(extract, "Program") : extract;

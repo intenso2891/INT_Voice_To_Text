@@ -24,7 +24,7 @@ function Tip({ text }: { text: string }) {
 // ---------------------------------------------------------------------------
 // ModelCatalog — choose and download Whisper model manually
 // ---------------------------------------------------------------------------
-interface ModelCatalogItem { id: string; name: string; sizeMB: number; desc: string; installed: boolean }
+interface ModelCatalogItem { id: string; name: string; sizeMB: number; desc: string; installed: boolean; active: boolean }
 
 function fmtBytes(n: number): string {
   if (n > 1073741824) return (n / 1073741824).toFixed(1) + " ГБ";
@@ -79,6 +79,19 @@ function ModelCatalog({ backend }: { backend: BackendType }) {
     }).catch(() => setDownloading(null));
   };
 
+  const selectModel = async (id: string) => {
+    try {
+      await fetch("/api/models/select", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelId: id }),
+      });
+      const res = await fetch("/api/models/catalog");
+      const data = await res.json() as { models: ModelCatalogItem[] };
+      setModels(data.models);
+    } catch {}
+  };
+
   const deleteAll = async () => {
     if (!confirm(t("modelDeleteConfirm"))) return;
     setDeleting(true);
@@ -102,11 +115,17 @@ function ModelCatalog({ backend }: { backend: BackendType }) {
           {models && models.map(m => (
             <div key={m.id} className="model-catalog-item">
               <div className="model-catalog-info">
-                <span className={"model-catalog-name" + (m.installed ? " installed" : "")}>
-                  {m.installed ? "✓ " : ""}{m.name} <small>({m.sizeMB > 1024 ? `${(m.sizeMB / 1024).toFixed(1)} ГБ` : `${m.sizeMB} МБ`})</small>
+                <span className={"model-catalog-name" + (m.active ? " installed" : "")}>
+                  {m.active ? "● " : m.installed ? "✓ " : ""}{m.name} <small>({m.sizeMB > 1024 ? `${(m.sizeMB / 1024).toFixed(1)} ГБ` : `${m.sizeMB} МБ`})</small>
                 </span>
-                <small className="model-catalog-desc">{m.desc}</small>
+                <small className="model-catalog-desc">{m.desc}{m.active ? " — активна" : ""}</small>
               </div>
+              {m.installed && !m.active && downloading !== m.id && (
+                <button className="retry-btn" style={{margin: 0, fontSize: 11}}
+                  onClick={() => selectModel(m.id)}>
+                  {t("modelSelect")}
+                </button>
+              )}
               {!m.installed && downloading !== m.id && (
                 <button className="retry-btn" style={{margin: 0, fontSize: 11}} disabled={downloading !== null}
                   onClick={() => download(m.id)}>

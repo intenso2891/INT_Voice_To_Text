@@ -16,7 +16,9 @@ namespace INTVoiceToText.Services;
 /// </summary>
 public sealed class SpeechService : IDisposable
 {
+    internal static SpeechService? _instance;
     private const string ModelFileName = "ggml-large-v3";
+    public SpeechService() { _instance = this; }
     private readonly Mutex _crossProcessDownload = new(false, @"Local\INT_VoiceToText.ModelDownload");
     private const long LargeV3Bytes = 3_095_033_483;
     public event Action<ModelProgress>? ProgressChanged;
@@ -183,7 +185,35 @@ public sealed class SpeechService : IDisposable
                 found.Add(n);
             }
         }
-        return new { models = models.Select(m => new { m.id, m.name, m.sizeMB, m.desc, installed = found.Contains(m.id) }).ToArray() };
+        // Determine active model
+        var activeId = "";
+        if (!string.IsNullOrEmpty(_instance?.ModelPath))
+        {
+            activeId = Path.GetFileNameWithoutExtension(_instance.ModelPath).Replace("ggml-", "").ToLowerInvariant();
+        }
+        return new { models = models.Select(m => new { m.id, m.name, m.sizeMB, m.desc, installed = found.Contains(m.id), active = m.id == activeId }).ToArray() };
+    }
+
+    /// <summary>Select an already-downloaded model as the active one.</summary>
+    public static object SelectModel(string modelId)
+    {
+        foreach (var dir in new[] {
+            Path.Combine(ExeDir(), "models"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "INT_VoiceToText", "models"),
+        })
+        {
+            var path = Path.Combine(dir, $"ggml-{modelId}.bin");
+            if (File.Exists(path) && FileValid(path))
+            {
+                if (_instance != null)
+                {
+                    _instance.ModelPath = path;
+                    _instance.LastError = null;
+                }
+                return new { ok = true, path };
+            }
+        }
+        return new { ok = false, error = $"Model {modelId} not found" };
     }
 
     /// <summary>Delete all downloaded model files.</summary>
@@ -468,24 +498,37 @@ public sealed class SpeechService : IDisposable
     }
 
     /// <summary>Transcribe float32 16 kHz mono samples into text (Whisper, local).
-    /// If GPU mode crashes, auto-falls back to CPU.</summary>
+    /// If GPU mode crashes or hangs, auto-falls back to CPU with timeout.</summary>
     public async Task<string> TranscribeAsync(float[] samples, string language, CancellationToken ct = default)
     {
         if (IsDownloading) throw new InvalidOperationException("MODEL_DOWNLOADING");
         if (!IsReady) await EnsureModelAsync(ct);
         if (string.IsNullOrEmpty(ModelPath)) throw new InvalidOperationException("STT model is not available.");
 
-        try
+        // GPU mode: add 30s timeout — if hangs, fall back to CPU
+        if (_useGpu)
         {
-            return await TranscribeInternalAsync(samples, language, ct).ConfigureAwait(false);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+            try
+            {
+                return await TranscribeInternalAsync(samples, language, timeoutCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                OnDebug?.Invoke("GPU_TIMEOUT: распознавание зависло (>30 сек) — переключаюсь на CPU...");
+                ConfigureCompute("cpu", 0);
+                return await TranscribeInternalAsync(samples, language, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                OnDebug?.Invoke($"GPU_FAILED: {ex.Message} — переключаюсь на CPU...");
+                ConfigureCompute("cpu", 0);
+                return await TranscribeInternalAsync(samples, language, ct).ConfigureAwait(false);
+            }
         }
-        catch (Exception ex) when (_useGpu && ex is not OperationCanceledException)
-        {
-            // GPU mode crashed → fall back to CPU
-            OnDebug?.Invoke($"GPU_FAILED: {ex.Message} — переключаюсь на CPU...");
-            ConfigureCompute("cpu", 0);
-            return await TranscribeInternalAsync(samples, language, ct).ConfigureAwait(false);
-        }
+
+        return await TranscribeInternalAsync(samples, language, ct).ConfigureAwait(false);
     }
 
     private async Task<string> TranscribeInternalAsync(float[] samples, string language, CancellationToken ct)

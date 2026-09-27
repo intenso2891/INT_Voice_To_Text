@@ -1,4 +1,4 @@
-# INT VoiceToText — prerequisite installer
+﻿# INT VoiceToText — prerequisite installer
 $ErrorActionPreference = 'Stop'
 Write-Host 'INT VoiceToText — установка необходимых компонентов' -ForegroundColor Cyan
 Write-Host ''
