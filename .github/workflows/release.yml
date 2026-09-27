@@ -63,14 +63,17 @@ jobs:
           Copy-Item Program_Source\library_words\words.txt Program\library_words\words.txt -Force
           Copy-Item Program_Source\Install-Requirements.ps1,Program_Source\Install-Requirements.bat Program -Force
 
-          $nativeDir = 'Program\runtimes\win-x64\native'
+          $nativeDir = 'Program\runtimes\win-x64'
+          $netNativeDir = 'Program\runtimes\win-x64\native'
           New-Item -ItemType Directory -Force $nativeDir | Out-Null
+          New-Item -ItemType Directory -Force $netNativeDir | Out-Null
 
           # ── Source 1: build intermediate (dotnet preserves runtimes/) ──
           $binDir = 'Program_Source\bin\Release\net9.0-windows\win-x64'
           $binRt  = "$binDir\runtimes\win-x64\native"
           if (Test-Path $binRt) {
             Copy-Item "$binRt\*.dll" $nativeDir -Force
+            Copy-Item "$binRt\*.dll" $netNativeDir -Force
             Copy-Item "$binRt\*.dll" Program -Force
             Write-Host "Copied from build intermediate: $binRt"
           }
@@ -85,6 +88,7 @@ jobs:
               $buildDir = Join-Path $found.FullName 'build\win-x64'
               if (Test-Path $buildDir) {
                 Copy-Item "$buildDir\*.dll" $nativeDir -Force
+                Copy-Item "$buildDir\*.dll" $netNativeDir -Force
                 Write-Host "Copied from NuGet cache ($($found.Name)): $buildDir"
               }
             }
@@ -100,10 +104,10 @@ jobs:
           $critical = @('whisper.dll','ggml-whisper.dll','ggml-base-whisper.dll','ggml-cpu-whisper.dll')
           $missing = @()
           foreach ($c in $critical) {
-            $inRoot  = Test-Path "Program\$c"
+            $inRoot = Test-Path "Program\$c"
             $inNative = Test-Path "$nativeDir\$c"
-            Write-Host "  $c root=$inRoot native=$inNative"
-            if (-not $inRoot -and -not $inNative) { $missing += $c }
+            Write-Host "  $c root=$inRoot runtimes/win-x64=$inNative"
+            if (-not $inNative) { $missing += $c }
           }
           if ($missing.Count -gt 0) { throw "MISSING critical native DLLs: $($missing -join ', ')" }
 

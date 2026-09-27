@@ -22,6 +22,118 @@ function Tip({ text }: { text: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// ModelCatalog — choose and download Whisper model manually
+// ---------------------------------------------------------------------------
+interface ModelCatalogItem { id: string; name: string; sizeMB: number; desc: string; installed: boolean }
+
+function fmtBytes(n: number): string {
+  if (n > 1073741824) return (n / 1073741824).toFixed(1) + " ГБ";
+  if (n > 1048576) return (n / 1048576).toFixed(0) + " МБ";
+  return (n / 1024).toFixed(0) + " КБ";
+}
+
+function ModelCatalog({ backend }: { backend: BackendType }) {
+  const { t } = useTranslation();
+  const [models, setModels] = useState<ModelCatalogItem[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [progress, setProgress] = useState({ percent: 0, bytes: 0, totalBytes: 0 });
+
+  // Poll /api/state for model download progress while downloading
+  useEffect(() => {
+    if (!downloading) return;
+    const iv = setInterval(async () => {
+      try {
+        const res = await fetch("/api/state");
+        const st = await res.json();
+        if (st.modelProgress) {
+          setProgress({ percent: st.modelProgress.percent, bytes: st.modelProgress.bytes, totalBytes: st.modelProgress.totalBytes });
+          if (st.modelProgress.completed) {
+            setDownloading(null);
+            fetch("/api/models/catalog").then(r => r.json()).then((d: { models: ModelCatalogItem[] }) => setModels(d.models)).catch(() => {});
+          }
+        }
+      } catch {}
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [downloading]);
+
+  const load = async () => {
+    if (models !== null) { setOpen(!open); return; }
+    try {
+      const res = await fetch("/api/models/catalog");
+      const data = await res.json() as { models: ModelCatalogItem[] };
+      setModels(data.models);
+      setOpen(true);
+    } catch { setModels([]); setOpen(true); }
+  };
+
+  const download = (id: string) => {
+    setDownloading(id);
+    setProgress({ percent: 0, bytes: 0, totalBytes: 0 });
+    fetch("/api/models/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ modelId: id }),
+    }).catch(() => setDownloading(null));
+  };
+
+  const deleteAll = async () => {
+    if (!confirm(t("modelDeleteConfirm"))) return;
+    setDeleting(true);
+    try {
+      await fetch("/api/models/delete", { method: "POST" });
+      const res = await fetch("/api/models/catalog");
+      const data = await res.json() as { models: ModelCatalogItem[] };
+      setModels(data.models);
+    } catch {}
+    setDeleting(false);
+  };
+
+  return (
+    <div className="model-files-wrap">
+      <button className="retry-btn" onClick={load} style={{ marginTop: 4 }}>
+        <Loader2 size={13} className={downloading ? "spin" : ""} /> {t("modelCatalogTitle")}
+      </button>
+      {open && (
+        <div className="model-files-list">
+          {models === null && <span className="runtime-dll">…</span>}
+          {models && models.map(m => (
+            <div key={m.id} className="model-catalog-item">
+              <div className="model-catalog-info">
+                <span className={"model-catalog-name" + (m.installed ? " installed" : "")}>
+                  {m.installed ? "✓ " : ""}{m.name} <small>({m.sizeMB > 1024 ? `${(m.sizeMB / 1024).toFixed(1)} ГБ` : `${m.sizeMB} МБ`})</small>
+                </span>
+                <small className="model-catalog-desc">{m.desc}</small>
+              </div>
+              {!m.installed && downloading !== m.id && (
+                <button className="retry-btn" style={{margin: 0, fontSize: 11}} disabled={downloading !== null}
+                  onClick={() => download(m.id)}>
+                  {t("modelDownload")}
+                </button>
+              )}
+              {downloading === m.id && (
+                <div className="model-dl-progress">
+                  <div className="model-progress-track" style={{width: 100}}>
+                    <div className="model-progress-fill" style={{ width: `${Math.min(progress.percent, 99)}%` }} />
+                  </div>
+                  <small>{progress.percent}% · {fmtBytes(progress.bytes)} / {fmtBytes(progress.totalBytes)}</small>
+                </div>
+              )}
+            </div>
+          ))}
+          <button className="retry-btn danger" style={{marginTop: 6}} disabled={deleting || downloading !== null}
+            onClick={deleteAll}>
+            <Trash2 size={13} /> {deleting ? "…" : t("modelDeleteAll")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ModelFilesList — lazy-loaded list of model files in the models/ directory
 // ---------------------------------------------------------------------------
 function ModelFilesList({ backend }: { backend: BackendType }) {
@@ -323,7 +435,19 @@ export default function App() {
           setError(friendly);
         };
         backend.onUpdate = (u) => setAvailableUpdate(u);
-        backend.onModelProgress = (p) => setModelProgress(p);
+        backend.onModelProgress = (p) => {
+          setModelProgress(p);
+          // After download completes, re-fetch /api/state to update modelReady
+          if (p.completed) {
+            setTimeout(async () => {
+              try {
+                const res = await fetch("/api/state");
+                const st = await res.json() as AppStateDto;
+                setInfo(prev => prev ? { ...prev, modelReady: st.modelReady, modelDownloading: st.modelDownloading, modelLastError: st.modelLastError } : prev);
+              } catch {}
+            }, 500);
+          }
+        };
         backend.onUpdateProgress = (p) => setUpdateProgress(p);
 
         await backend.connect();
@@ -635,6 +759,7 @@ export default function App() {
               </button>
             )}
             {/* Model files list */}
+            <ModelCatalog backend={backend} />
             <ModelFilesList backend={backend} />
           </div>
 
@@ -683,7 +808,19 @@ export default function App() {
 
       {info?.debugMode && showSettings && (
         <section className="debug-card">
-          <div className="debug-head"><span>{t("debugConsole")}</span><button onClick={refreshDebugLog}>{t("refreshDebug")}</button></div>
+          <div className="debug-head">
+            <span>{t("debugConsole")}</span>
+            <div className="debug-actions">
+              <button onClick={refreshDebugLog}>{t("refreshDebug")}</button>
+              <button onClick={async () => {
+                try {
+                  await fetch("/api/debug/clear", { method: "POST" });
+                  setDebugLines([]);
+                  refreshDebugLog();
+                } catch {}
+              }}>{t("clearDebug")}</button>
+            </div>
+          </div>
           <pre>{debugLines.length ? debugLines.join("\n") : t("debugEmpty")}</pre>
         </section>
       )}

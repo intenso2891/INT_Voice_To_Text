@@ -265,6 +265,9 @@ public sealed class VoiceEngine : IDisposable
     /// <summary>Force re-download of the model.</summary>
     public Task<object> RetryModelDownloadAsync(CancellationToken ct) => _speech.RetryDownloadAsync(ct);
 
+    /// <summary>Download a specific model by id (tiny/base/small/medium/large-v3).</summary>
+    public Task<string?> DownloadModelAsync(string modelId, CancellationToken ct) => _speech.DownloadModelAsync(modelId, ct);
+
     /// <summary>Last download error (null if none).</summary>
     public string? ModelLastError => _speech.LastError;
 

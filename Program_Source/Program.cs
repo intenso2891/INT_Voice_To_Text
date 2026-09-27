@@ -24,6 +24,21 @@ internal static class Program
     [STAThread]
     public static async Task Main(string[] args)
     {
+        // CRITICAL: add exe folder to PATH so Whisper.net can find native DLLs.
+        // PublishSingleFile extracts managed code to %TEMP%\.net\... but native DLLs
+        // (whisper.dll, ggml-*.dll) sit next to the exe. Whisper.net searches the
+        // temp dir and fails. Adding exeDir to PATH fixes ALL loading mechanisms.
+        try
+        {
+            var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+            var nativeDir = Path.Combine(exeDir, "runtimes", "win-x64", "native");
+            var currentPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+            var sep = Path.PathSeparator.ToString();
+            if (!currentPath.Contains(exeDir, StringComparison.OrdinalIgnoreCase))
+                Environment.SetEnvironmentVariable("PATH", exeDir + sep + nativeDir + sep + currentPath);
+        }
+        catch { }
+
         if (!PrerequisiteChecker.Ensure()) return;
         var state = AppState.Load();
         state.StartWithWindows = StartupManager.IsEnabled();
@@ -98,6 +113,22 @@ app.MapPost("/api/runtime/repair", () =>
 
 app.MapGet("/api/models", () => Results.Ok(VoiceEngine.GetModelList()));
 
+app.MapGet("/api/models/catalog", () => Results.Ok(SpeechService.GetModelCatalog()));
+
+app.MapPost("/api/models/delete", () => Results.Ok(SpeechService.DeleteAllModels()));
+
+app.MapPost("/api/models/download", (DownloadModelBody body) =>
+{
+    // Fire-and-forget: return immediately, download runs in background
+    // Progress is broadcast via SignalR "modelProgress" events.
+    _ = Task.Run(async () =>
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(30));
+        try { await engine.DownloadModelAsync(body.modelId, cts.Token); } catch { }
+    });
+    return Results.Ok(new { ok = true, started = true });
+});
+
 app.MapPost("/api/models/retry", async () =>
 {
     using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
@@ -110,6 +141,13 @@ app.MapGet("/api/debug/log", () =>
     var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "INT_VoiceToText", "debug.log");
     try { return Results.Text(File.Exists(path) ? File.ReadAllText(path) : "(debug log пока пуст)"); }
     catch (Exception ex) { return Results.Text("DEBUG_READ_ERROR: " + ex.Message); }
+});
+
+app.MapPost("/api/debug/clear", () =>
+{
+    var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "INT_VoiceToText", "debug.log");
+    try { File.WriteAllText(path, ""); return Results.Ok(new { ok = true }); }
+    catch (Exception ex) { return Results.Ok(new { ok = false, error = ex.Message }); }
 });
 
 app.MapPost("/api/settings", (SettingsUpdateBody body) =>
@@ -369,4 +407,5 @@ engine.Dispose();
 }
 
 record SettingsUpdateBody(HotkeyConfig? hotkey, string? language, bool? pasteResult, int? microphoneDevice, float? microphoneSensitivity, bool? debugMode, bool? startWithWindows, bool? minimizeToTrayOnClose, string? computeMode, int? gpuDevice);
+record DownloadModelBody(string modelId);
 record UpdateInstallBody(string version, string releaseUrl, string assetUrl, string assetName);

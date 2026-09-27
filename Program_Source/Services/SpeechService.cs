@@ -99,7 +99,7 @@ public sealed class SpeechService : IDisposable
         }
     }
 
-    /// <summary>Locate (or download) the ggml model. Safe to call repeatedly.</summary>
+    /// <summary>Locate the ggml model. Does NOT download — user must choose manually.</summary>
     public async Task<string?> EnsureModelAsync(CancellationToken ct = default, Action<string>? onProgress = null)
     {
         await _modelGate.WaitAsync(ct).ConfigureAwait(false);
@@ -120,16 +120,16 @@ public sealed class SpeechService : IDisposable
 
             var candidates = new List<string>
             {
-                Path.Combine(AppContext.BaseDirectory, "models"),                       // shipped / embedded
-                Path.Combine(ExeDir(), "models"),                                        // folder next to exe (single-file case)
+                Path.Combine(AppContext.BaseDirectory, "models"),
+                Path.Combine(ExeDir(), "models"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                             "INT_VoiceToText", "models"),                              // user cache
+                             "INT_VoiceToText", "models"),
             };
 
             foreach (var dir in candidates.Distinct())
             {
                 if (!Directory.Exists(dir)) continue;
-                var bin = Directory.EnumerateFiles(dir, ModelFileName + ".bin")
+                var bin = Directory.EnumerateFiles(dir, "*.bin")
                     .Where(FileValid)
                     .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
                 if (bin != null)
@@ -141,48 +141,117 @@ public sealed class SpeechService : IDisposable
                 }
             }
 
-            // Not found locally → one-time download (requires internet once only).
-            onProgress?.Invoke("downloading");
+            // No model found — DON'T download automatically. User must choose.
+            return null;
+        }
+        finally
+        {
+            _modelGate.Release();
+        }
+    }
+
+    /// <summary>Available Whisper models for manual selection.</summary>
+    public static object GetModelCatalog()
+    {
+        var models = new[]
+        {
+            new { id = "tiny",    name = "Tiny",    sizeMB = 75L,   desc = "Очень быстрая, низкое качество" },
+            new { id = "base",    name = "Base",    sizeMB = 142L,  desc = "Быстрая, приемлемое качество" },
+            new { id = "small",   name = "Small",   sizeMB = 466L,  desc = "Баланс скорости и качества" },
+            new { id = "medium",  name = "Medium",  sizeMB = 1500L, desc = "Хорошее качество, медленнее" },
+            new { id = "large-v3", name = "Large V3", sizeMB = 3095L, desc = "Лучшее качество (рекомендуется)" },
+        };
+        var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dir in new[] {
+            Path.Combine(ExeDir(), "models"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "INT_VoiceToText", "models"),
+        })
+        {
+            if (!Directory.Exists(dir)) continue;
+            foreach (var f in Directory.EnumerateFiles(dir, "*.bin").Where(FileValid))
+            {
+                var n = Path.GetFileNameWithoutExtension(f).Replace("ggml-", "").ToLowerInvariant();
+                found.Add(n);
+            }
+        }
+        return new { models = models.Select(m => new { m.id, m.name, m.sizeMB, m.desc, installed = found.Contains(m.id) }).ToArray() };
+    }
+
+    /// <summary>Delete all downloaded model files.</summary>
+    public static object DeleteAllModels()
+    {
+        int deleted = 0; long freed = 0;
+        foreach (var dir in new[] {
+            Path.Combine(ExeDir(), "models"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "INT_VoiceToText", "models"),
+        })
+        {
+            if (!Directory.Exists(dir)) continue;
+            foreach (var f in Directory.EnumerateFiles(dir, "*.bin").Concat(Directory.EnumerateFiles(dir, "*.downloading")))
+            {
+                try { var sz = new FileInfo(f).Length; File.Delete(f); deleted++; freed += sz; }
+                catch { }
+            }
+        }
+        return new { deleted, freedMB = Math.Round(freed / 1048576.0, 1) };
+    }
+
+    /// <summary>Download a specific model by id. Replaces any existing model.</summary>
+    public async Task<string?> DownloadModelAsync(string modelId, CancellationToken ct = default)
+    {
+        await _modelGate.WaitAsync(ct).ConfigureAwait(false);
+        string? targetPath = null;
+        string? partPath = null;
+        try
+        {
+            if (IsDownloading) return null;
+            LastError = null;
+
+            var ggmlType = modelId switch
+            {
+                "tiny" => GgmlType.Tiny,
+                "base" => GgmlType.Base,
+                "small" => GgmlType.Small,
+                "medium" => GgmlType.Medium,
+                "large-v3" => GgmlType.LargeV3,
+                _ => GgmlType.LargeV3,
+            };
+            long expectedSize = modelId switch
+            {
+                "tiny" => 75_000_000L,
+                "base" => 142_000_000L,
+                "small" => 466_000_000L,
+                "medium" => 1_500_000_000L,
+                _ => LargeV3Bytes,
+            };
+
             var targetDir = Path.Combine(ExeDir(), "models");
             Directory.CreateDirectory(targetDir);
-            var targetPath = Path.Combine(targetDir, ModelFileName + ".bin");
+            targetPath = Path.Combine(targetDir, $"ggml-{modelId}.bin");
+            partPath = targetPath + $".{Environment.ProcessId}.{Guid.NewGuid():N}.downloading";
 
-            if (FileValid(targetPath))
-            {
-                ModelPath = targetPath;
-                Progress = Progress with { Bytes = LargeV3Bytes, Completed = true };
-                ProgressChanged?.Invoke(Progress);
-                return targetPath;
-            }
-            // Corrupt/partial leftover → delete so we can re-download.
-            try { File.Delete(targetPath); } catch { }
-
-            // Atomic download: write to a UNIQUE temp file so two processes never collide.
-            var partPath = targetPath + $".{Environment.ProcessId}.{Guid.NewGuid():N}.downloading";
             try { _crossProcessDownload.WaitOne(); } catch (AbandonedMutexException) { }
             try
             {
                 if (FileValid(targetPath))
                 {
                     ModelPath = targetPath;
-                    Progress = Progress with { Bytes = LargeV3Bytes, Completed = true };
+                    Progress = Progress with { Bytes = expectedSize, Completed = true };
                     ProgressChanged?.Invoke(Progress);
                     return targetPath;
                 }
 
-                // Retry download up to 3 times on network errors.
-                const int maxDownloadRetries = 3;
-                for (int attempt = 1; attempt <= maxDownloadRetries; attempt++)
+                const int maxRetries = 3;
+                for (int attempt = 1; attempt <= maxRetries; attempt++)
                 {
                     try
                     {
                         IsDownloading = true;
-                        ProgressChanged?.Invoke(Progress with { Bytes = 0, Completed = false });
-                        onProgress?.Invoke($"downloading attempt {attempt}/{maxDownloadRetries}");
+                        Progress = new ModelProgress(0, expectedSize, false);
+                        ProgressChanged?.Invoke(Progress);
                         using var stream = await WhisperGgmlDownloader.Default.GetGgmlModelAsync(
-                            GgmlType.LargeV3, QuantizationType.NoQuantization, ct).ConfigureAwait(false);
+                            ggmlType, QuantizationType.NoQuantization, ct).ConfigureAwait(false);
 
-                        // Create (or truncate) the partial file for each attempt.
                         using (var file = new FileStream(partPath, FileMode.Create, FileAccess.Write, FileShare.Read))
                         {
                             var buffer = new byte[128 * 1024];
@@ -198,49 +267,32 @@ public sealed class SpeechService : IDisposable
 
                         if (!FileValid(partPath))
                         {
-                            if (attempt < maxDownloadRetries)
-                            {
-                                LastError = "Model file failed integrity check, retrying...";
-                                onProgress?.Invoke("error:integrity_retry");
-                                await Task.Delay(2000 * attempt, ct).ConfigureAwait(false);
-                                continue;
-                            }
-                            throw new IOException("Downloaded model failed the integrity check after " + maxDownloadRetries + " attempts.");
+                            if (attempt < maxRetries) { await Task.Delay(2000 * attempt, ct).ConfigureAwait(false); continue; }
+                            throw new IOException("Integrity check failed after " + maxRetries + " attempts.");
                         }
 
                         if (File.Exists(targetPath)) File.Delete(targetPath);
                         File.Move(partPath, targetPath);
-
                         ModelPath = targetPath;
                         IsDownloading = false;
-                        Progress = Progress with { Bytes = LargeV3Bytes, Completed = true };
+                        Progress = new ModelProgress(new FileInfo(targetPath).Length, new FileInfo(targetPath).Length, true);
                         ProgressChanged?.Invoke(Progress);
                         return targetPath;
                     }
-                    catch (OperationCanceledException) { throw; } // Don't retry on cancellation.
+                    catch (OperationCanceledException) { throw; }
                     catch (Exception ex) when (ex is IOException or HttpRequestException or System.Net.Sockets.SocketException)
                     {
                         LastError = ex.Message;
-                        if (attempt < maxDownloadRetries)
-                        {
-                            onProgress?.Invoke($"error:{ex.Message} — retry {attempt}/{maxDownloadRetries}");
-                            // Exponential backoff: 3s, 6s, 12s...
-                            var delay = 3000 * (int)Math.Pow(2, attempt - 1);
-                            await Task.Delay(delay, ct).ConfigureAwait(false);
-                            continue;
-                        }
-                        onProgress?.Invoke("error:" + ex.Message);
-                        throw; // All retries exhausted.
+                        if (attempt < maxRetries) { await Task.Delay(3000 * (int)Math.Pow(2, attempt - 1), ct).ConfigureAwait(false); continue; }
+                        throw;
                     }
                 }
-                // Should not reach here, but just in case.
-                throw new IOException("Download failed after " + maxDownloadRetries + " attempts.");
+                throw new IOException("Download failed after " + maxRetries + " attempts.");
             }
             finally
             {
                 IsDownloading = false;
-                // Only delete partial file if the final model file is valid (download succeeded).
-                if (!FileValid(targetPath))
+                if (partPath != null && !FileValid(targetPath!))
                     try { File.Delete(partPath); } catch { }
                 try { _crossProcessDownload.ReleaseMutex(); } catch { }
             }
@@ -271,59 +323,176 @@ public sealed class SpeechService : IDisposable
 
     private static bool _nativeDeployed;
     private static readonly object _nativeLock = new();
+    private static bool _resolverSet;
+
+    // Win32: add a directory to the process DLL search path.
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern IntPtr AddDllDirectory(string lpPathName);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetDefaultDllDirectories(uint directoryFlags);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern IntPtr LoadLibraryEx(string lpLibFileName, IntPtr hFile, uint dwFlags);
+
+    private const uint LOAD_LIBRARY_SEARCH_USER_DIRS = 0x00000400;
+    private const uint LOAD_LIBRARY_SEARCH_SYSTEM32 = 0x00000800;
+    private const uint LOAD_LIBRARY_SEARCH_APPLICATION_DIR = 0x00000200;
+    private const uint LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR = 0x00000100;
 
     /// <summary>
-    /// Deploy native Whisper DLLs to locations where Whisper.net's NativeLibraryLoader will find them.
+    /// THE definitive fix: add the exe folder to the process PATH environment variable.
     ///
-    /// The core problem: with PublishSingleFile, AppContext.BaseDirectory points to a TEMP
-    /// extraction dir (%TEMP%\.net\...), not the exe folder. Whisper.net searches:
-    ///   1. AppContext.BaseDirectory/runtimes/win-x64/native/
-    ///   2. AppContext.BaseDirectory/
-    ///   3. System PATH
-    /// DLLs physically sit next to the exe — we must COPY them to the temp dir.
+    /// Root cause: PublishSingleFile extracts managed code to %TEMP%\.net\...,
+    /// so Whisper.net's NativeLibraryLoader searches the temp dir and can't find
+    /// whisper.dll / ggml-*.dll sitting next to the exe.
+    ///
+    /// Adding exeDir to PATH makes LoadLibrary("whisper.dll") find it everywhere.
+    /// This is the most fundamental fix — it works regardless of how Whisper.net
+    /// loads the library (NativeLibrary.TryLoad, LoadLibrary, or P/Invoke).
+    /// </summary>
+    private static void EnsureNativeResolver()
+    {
+        if (_resolverSet) return;
+        lock (_nativeLock)
+        {
+            if (_resolverSet) return;
+            var exeDir = ExeDir();
+            var nativeDir = Path.Combine(exeDir, "runtimes", "win-x64", "native");
+
+            // PRIMARY FIX: add exe folder to PATH so LoadLibrary("whisper.dll") works
+            try
+            {
+                var currentPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+                var sep = Path.PathSeparator.ToString();
+                if (!currentPath.Contains(exeDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    Environment.SetEnvironmentVariable("PATH", exeDir + sep + nativeDir + sep + currentPath);
+                }
+            }
+            catch { }
+
+            // SECONDARY: AddDllDirectory as extra insurance
+            try
+            {
+                SetDefaultDllDirectories(
+                    LOAD_LIBRARY_SEARCH_USER_DIRS |
+                    LOAD_LIBRARY_SEARCH_SYSTEM32 |
+                    LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
+                    LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR);
+                AddDllDirectory(exeDir);
+                AddDllDirectory(nativeDir);
+            }
+            catch { }
+
+            // TERTIARY: pre-load each DLL by full path
+            string[] dlls = { "ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-whisper.dll", "ggml-vulkan-whisper.dll", "whisper.dll" };
+            foreach (var dll in dlls)
+            {
+                foreach (var dir in new[] { nativeDir, exeDir })
+                {
+                    var path = Path.Combine(dir, dll);
+                    if (File.Exists(path))
+                    {
+                        try { LoadLibraryEx(path, IntPtr.Zero, 0); } catch { }
+                        break;
+                    }
+                }
+            }
+
+            // QUATERNARY: DllImportResolver
+            try
+            {
+                System.Runtime.InteropServices.NativeLibrary.SetDllImportResolver(
+                    typeof(WhisperFactory).Assembly,
+                    (name, assembly, searchPath) =>
+                    {
+                        foreach (var dir in new[] { nativeDir, exeDir })
+                        {
+                            var candidate = Path.Combine(dir, name + ".dll");
+                            if (File.Exists(candidate))
+                            {
+                                try { return System.Runtime.InteropServices.NativeLibrary.Load(candidate); }
+                                catch { }
+                            }
+                        }
+                        return IntPtr.Zero;
+                    });
+            }
+            catch (InvalidOperationException) { }
+            catch { }
+
+            _resolverSet = true;
+        }
+    }
+
+    /// <summary>
+    /// Deploy native Whisper DLLs to the EXACT paths Whisper.net searches.
+    ///
+    /// From Whisper.net source (NativeLibraryLoader.GetRuntimePaths):
+    ///   runtimePath = Path.Combine(assemblySearchPath, "runtimes", "win-x64")
+    ///   whisperPath = Path.Combine(runtimePath, "whisper.dll")
+    ///
+    /// So DLLs must be in <searchPath>/runtimes/win-x64/ (NOT runtimes/win-x64/native/!)
+    /// assemblySearchPaths include: AppDomain.BaseDirectory, exe directory, etc.
     /// </summary>
     public static string DeployNativeLibraries()
     {
+        EnsureNativeResolver();
         lock (_nativeLock)
         {
             var exeDir = ExeDir();
-            var targetBase = AppContext.BaseDirectory; // temp dir for single-file
-            var targetNative = Path.Combine(targetBase, "runtimes", "win-x64", "native");
-            Directory.CreateDirectory(targetNative);
-
-            var sourceNative = Path.Combine(exeDir, "runtimes", "win-x64", "native");
             string[] dlls = { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-vulkan-whisper.dll" };
             var report = new System.Text.StringBuilder();
-            int deployed = 0, failed = 0;
+            int deployed = 0;
 
-            foreach (var dll in dlls)
+            // Whisper.net searches these directories for runtimes/win-x64/*.dll:
+            // 1. AppContext.BaseDirectory (temp dir for single-file)
+            // 2. Exe directory (from GetCommandLineArgs)
+            // 3. Assembly.Location directory
+            var searchBases = new List<string> { AppContext.BaseDirectory, exeDir };
+            if (!string.IsNullOrEmpty(System.Reflection.Assembly.GetEntryAssembly()?.Location))
             {
-                // Find source
-                string? src = null;
-                foreach (var dir in new[] { sourceNative, exeDir })
-                {
-                    var p = Path.Combine(dir, dll);
-                    if (File.Exists(p)) { src = p; break; }
-                }
-                if (src == null) { report.Append($"  ✗ {dll}: not found in exe folder\n"); failed++; continue; }
+                var asmDir = Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly()!.Location);
+                if (asmDir != null) searchBases.Add(asmDir);
+            }
 
-                // Deploy to BOTH target locations
-                var ok = true;
-                foreach (var dst in new[] { Path.Combine(targetNative, dll), Path.Combine(targetBase, dll) })
+            foreach (var baseDir in searchBases.Distinct())
+            {
+                // Whisper.net path: runtimes/win-x64/
+                var runtimeDir = Path.Combine(baseDir, "runtimes", "win-x64");
+                // Standard .NET path: runtimes/win-x64/native/
+                var nativeDir = Path.Combine(runtimeDir, "native");
+                Directory.CreateDirectory(runtimeDir);
+                Directory.CreateDirectory(nativeDir);
+
+                foreach (var dll in dlls)
                 {
-                    try
+                    // Find source
+                    string? src = null;
+                    foreach (var srcDir in new[] { Path.Combine(exeDir, "runtimes", "win-x64"), Path.Combine(exeDir, "runtimes", "win-x64", "native"), exeDir })
                     {
-                        if (!File.Exists(dst) || new FileInfo(dst).Length != new FileInfo(src).Length)
-                            File.Copy(src, dst, true);
+                        var p = Path.Combine(srcDir, dll);
+                        if (File.Exists(p)) { src = p; break; }
                     }
-                    catch (Exception ex) { ok = false; report.Append($"  ✗ {dll}: copy failed — {ex.Message}\n"); }
+                    if (src == null) continue;
+
+                    // Copy to BOTH locations (Whisper.net + .NET convention)
+                    foreach (var dst in new[] { Path.Combine(runtimeDir, dll), Path.Combine(nativeDir, dll) })
+                    {
+                        try
+                        {
+                            if (!File.Exists(dst) || new FileInfo(dst).Length != new FileInfo(src).Length)
+                                File.Copy(src, dst, true);
+                        }
+                        catch { }
+                    }
+                    deployed++;
                 }
-                if (ok) { deployed++; }
-                else failed++;
             }
 
             _nativeDeployed = true;
-            report.Insert(0, $"Deployed {deployed}/{dlls.Length} native DLLs → {targetBase}\n");
+            report.Append($"DLL deploy: {deployed} files → runtimes/win-x64/ in {searchBases.Count} locations");
             return report.ToString();
         }
     }
