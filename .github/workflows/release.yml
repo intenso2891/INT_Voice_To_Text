@@ -63,35 +63,54 @@ jobs:
           Copy-Item Program_Source\library_words\words.txt Program\library_words\words.txt -Force
           Copy-Item Program_Source\Install-Requirements.ps1,Program_Source\Install-Requirements.bat Program -Force
 
-          # ── Native Whisper DLLs — CPU only (keep ZIP small) ──
-          # Vulkan/CUDA runtimes are downloaded on demand by the app if GPU mode is selected.
-          $nugetCache = ((dotnet nuget locals global-packages --list) -replace 'global-packages:\s*','').Trim()
           $nativeDir = 'Program\runtimes\win-x64\native'
           New-Item -ItemType Directory -Force $nativeDir | Out-Null
 
-          # CPU runtime is ESSENTIAL — goes to both root and runtimes/win-x64/native/
-          $cpuBuild = Join-Path $nugetCache 'whisper.net.runtime\1.9.1\build\win-x64'
-          if (Test-Path $cpuBuild) {
-            Copy-Item "$cpuBuild\*.dll" Program -Force
-            Copy-Item "$cpuBuild\*.dll" $nativeDir -Force
-            Write-Host "Copied CPU native DLLs from whisper.net.runtime"
+          # ── Source 1: build intermediate (dotnet preserves runtimes/) ──
+          $binDir = 'Program_Source\bin\Release\net9.0-windows\win-x64'
+          $binRt  = "$binDir\runtimes\win-x64\native"
+          if (Test-Path $binRt) {
+            Copy-Item "$binRt\*.dll" $nativeDir -Force
+            Copy-Item "$binRt\*.dll" Program -Force
+            Write-Host "Copied from build intermediate: $binRt"
           }
 
-          # Vulkan runtime (optional GPU support, ~110MB for win-x64 only)
-          $vulkanBuild = Join-Path $nugetCache 'whisper.net.runtime.vulkan\1.9.1\build\win-x64'
-          if (Test-Path $vulkanBuild) {
-            Copy-Item "$vulkanBuild\*.dll" $nativeDir -Force
-            Write-Host "Copied Vulkan native DLLs from whisper.net.runtime.vulkan"
+          # ── Source 2: NuGet cache (whisper.net.runtime*) ──
+          $nugetCache = ((dotnet nuget locals global-packages --list) -replace 'global-packages:\s*','').Trim()
+          $whisperPkgs = @('whisper.net.runtime','whisper.net.runtime.vulkan','whisper.net.runtime.noavx')
+          foreach ($pkg in $whisperPkgs) {
+            $found = Get-ChildItem (Join-Path $nugetCache "$pkg") -Directory -ErrorAction SilentlyContinue |
+                     Sort-Object Name -Descending | Select-Object -First 1
+            if ($found) {
+              $buildDir = Join-Path $found.FullName 'build\win-x64'
+              if (Test-Path $buildDir) {
+                Copy-Item "$buildDir\*.dll" $nativeDir -Force
+                Write-Host "Copied from NuGet cache ($($found.Name)): $buildDir"
+              }
+            }
           }
 
-          # Verify critical DLLs exist
+          # ── Also copy CPU DLLs to Program root (Whisper.net fallback path) ──
+          $rootDlls = @('whisper.dll','ggml-whisper.dll','ggml-base-whisper.dll','ggml-cpu-whisper.dll')
+          foreach ($d in $rootDlls) {
+            if (Test-Path "$nativeDir\$d") { Copy-Item "$nativeDir\$d" Program -Force }
+          }
+
+          # ── VERIFY critical DLLs exist ──
           $critical = @('whisper.dll','ggml-whisper.dll','ggml-base-whisper.dll','ggml-cpu-whisper.dll')
+          $missing = @()
           foreach ($c in $critical) {
-            if (-not (Test-Path "Program\$c")) { throw "MISSING critical native DLL: $c" }
+            $inRoot  = Test-Path "Program\$c"
+            $inNative = Test-Path "$nativeDir\$c"
+            Write-Host "  $c root=$inRoot native=$inNative"
+            if (-not $inRoot -and -not $inNative) { $missing += $c }
           }
+          if ($missing.Count -gt 0) { throw "MISSING critical native DLLs: $($missing -join ', ')" }
 
-          # Report size
+          # ── Report sizes ──
+          $nativeSize = (Get-ChildItem $nativeDir -File | Measure-Object -Property Length -Sum).Sum
           $totalSize = (Get-ChildItem Program -Recurse -File | Measure-Object -Property Length -Sum).Sum
+          Write-Host "runtimes/win-x64/native: $([math]::Round($nativeSize / 1MB, 1)) MB"
           Write-Host "Program total: $([math]::Round($totalSize / 1MB, 1)) MB"
 
           Remove-Item Program\*.pdb -Force -ErrorAction SilentlyContinue
