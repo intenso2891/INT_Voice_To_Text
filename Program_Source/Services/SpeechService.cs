@@ -20,6 +20,7 @@ public sealed class SpeechService : IDisposable
     private readonly Mutex _crossProcessDownload = new(false, @"Local\INT_VoiceToText.ModelDownload");
     private const long LargeV3Bytes = 3_095_033_483;
     public event Action<ModelProgress>? ProgressChanged;
+    public event Action<string>? OnDebug;
     public bool IsDownloading { get; private set; }
     public ModelProgress Progress { get; private set; } = new(0, LargeV3Bytes, false);
 
@@ -196,7 +197,7 @@ public sealed class SpeechService : IDisposable
         return new { deleted, freedMB = Math.Round(freed / 1048576.0, 1) };
     }
 
-    /// <summary>Download a specific model by id. Replaces any existing model.</summary>
+    /// <summary>Download a specific model by id. Tries multiple mirrors with stall detection.</summary>
     public async Task<string?> DownloadModelAsync(string modelId, CancellationToken ct = default)
     {
         await _modelGate.WaitAsync(ct).ConfigureAwait(false);
@@ -207,15 +208,6 @@ public sealed class SpeechService : IDisposable
             if (IsDownloading) return null;
             LastError = null;
 
-            var ggmlType = modelId switch
-            {
-                "tiny" => GgmlType.Tiny,
-                "base" => GgmlType.Base,
-                "small" => GgmlType.Small,
-                "medium" => GgmlType.Medium,
-                "large-v3" => GgmlType.LargeV3,
-                _ => GgmlType.LargeV3,
-            };
             long expectedSize = modelId switch
             {
                 "tiny" => 75_000_000L,
@@ -230,6 +222,15 @@ public sealed class SpeechService : IDisposable
             targetPath = Path.Combine(targetDir, $"ggml-{modelId}.bin");
             partPath = targetPath + $".{Environment.ProcessId}.{Guid.NewGuid():N}.downloading";
 
+            // Multiple download sources (mirrors) for resilience
+            var fileName = $"ggml-{modelId}.bin";
+            var sources = new[]
+            {
+                $"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{fileName}",
+                $"https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/{fileName}",
+                $"https://mirror.ghproxy.com/https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{fileName}",
+            };
+
             try { _crossProcessDownload.WaitOne(); } catch (AbandonedMutexException) { }
             try
             {
@@ -241,53 +242,102 @@ public sealed class SpeechService : IDisposable
                     return targetPath;
                 }
 
-                const int maxRetries = 3;
-                for (int attempt = 1; attempt <= maxRetries; attempt++)
+                IsDownloading = true;
+                Progress = new ModelProgress(0, expectedSize, false);
+                ProgressChanged?.Invoke(Progress);
+
+                Exception? lastEx = null;
+                string[] tried = Array.Empty<string>();
+
+                foreach (var url in sources)
                 {
                     try
                     {
-                        IsDownloading = true;
-                        Progress = new ModelProgress(0, expectedSize, false);
-                        ProgressChanged?.Invoke(Progress);
-                        using var stream = await WhisperGgmlDownloader.Default.GetGgmlModelAsync(
-                            ggmlType, QuantizationType.NoQuantization, ct).ConfigureAwait(false);
+                        // Check if source is reachable (HEAD request with 10s timeout)
+                        using (var headCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                        {
+                            headCts.CancelAfter(10_000);
+                            using var headClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                            using var headReq = new HttpRequestMessage(HttpMethod.Head, url);
+                            var head = await headClient.SendAsync(headReq, headCts.Token).ConfigureAwait(false);
+                            if (!head.IsSuccessStatusCode)
+                            {
+                                tried = tried.Append(url).ToArray();
+                                continue;
+                            }
+                        }
 
-                        using (var file = new FileStream(partPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+                        // Download with stall detection (10s without data = switch source)
+                        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+                        var resp = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
+                        if (!resp.IsSuccessStatusCode)
+                        {
+                            tried = tried.Append(url).ToArray();
+                            continue;
+                        }
+
+                        using (var file = new FileStream(partPath!, FileMode.Create, FileAccess.Write, FileShare.Read))
+                        using (var stream = await resp.Content.ReadAsStreamAsync(cts.Token).ConfigureAwait(false))
                         {
                             var buffer = new byte[128 * 1024];
                             int read;
-                            while ((read = await stream.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                            long lastActivity = Environment.TickCount64;
+                            while (true)
                             {
-                                await file.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                                // Stall detection: 10 seconds without data → abort this source
+                                using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+                                stallCts.CancelAfter(10_000);
+                                try
+                                {
+                                    read = await stream.ReadAsync(buffer, stallCts.Token).ConfigureAwait(false);
+                                }
+                                catch (OperationCanceledException) when (!cts.Token.IsCancellationRequested)
+                                {
+                                    throw new IOException($"Скачивание зависло (нет данных 10 сек) с {new Uri(url).Host}");
+                                }
+
+                                if (read <= 0) break;
+                                await file.WriteAsync(buffer.AsMemory(0, read), cts.Token).ConfigureAwait(false);
+                                lastActivity = Environment.TickCount64;
                                 Progress = Progress with { Bytes = file.Length };
                                 ProgressChanged?.Invoke(Progress);
                             }
-                            await file.FlushAsync(ct).ConfigureAwait(false);
+                            await file.FlushAsync(cts.Token).ConfigureAwait(false);
                         }
 
-                        if (!FileValid(partPath))
+                        if (!FileValid(partPath!))
                         {
-                            if (attempt < maxRetries) { await Task.Delay(2000 * attempt, ct).ConfigureAwait(false); continue; }
-                            throw new IOException("Integrity check failed after " + maxRetries + " attempts.");
+                            tried = tried.Append(url).ToArray();
+                            continue;
                         }
 
                         if (File.Exists(targetPath)) File.Delete(targetPath);
-                        File.Move(partPath, targetPath);
+                        File.Move(partPath!, targetPath!);
                         ModelPath = targetPath;
                         IsDownloading = false;
                         Progress = new ModelProgress(new FileInfo(targetPath).Length, new FileInfo(targetPath).Length, true);
                         ProgressChanged?.Invoke(Progress);
                         return targetPath;
                     }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex) when (ex is IOException or HttpRequestException or System.Net.Sockets.SocketException)
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                    catch (Exception ex)
                     {
-                        LastError = ex.Message;
-                        if (attempt < maxRetries) { await Task.Delay(3000 * (int)Math.Pow(2, attempt - 1), ct).ConfigureAwait(false); continue; }
-                        throw;
+                        lastEx = ex;
+                        tried = tried.Append(url).ToArray();
+                        if (partPath != null && File.Exists(partPath)) try { File.Delete(partPath); } catch { }
+                        continue;
                     }
                 }
-                throw new IOException("Download failed after " + maxRetries + " attempts.");
+
+                // All sources failed — show manual download instructions
+                var manualUrl = $"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{fileName}";
+                var modelDir = Path.Combine(ExeDir(), "models");
+                throw new IOException(
+                    $"Не удалось скачать модель {modelId} ни с одного источника.\n" +
+                    $"Проблемы: {string.Join("; ", tried.Select(u => new Uri(u).Host))}\n\n" +
+                    $"Скачай файл вручную:\n{manualUrl}\n\n" +
+                    $"И положи его сюда:\n{targetPath}");
             }
             finally
             {
@@ -418,6 +468,12 @@ public sealed class SpeechService : IDisposable
 
         DeployNativeLibraries();
 
+        // First-time model loading can take 10-60s for large models
+        if (_factory == null)
+        {
+            OnDebug?.Invoke($"MODEL_LOADING size={new FileInfo(ModelPath!).Length / 1024 / 1024}MB — загрузка модели в память, подождите...");
+        }
+
         lock (_gate)
         {
             _factory ??= WhisperFactory.FromPath(ModelPath!, new WhisperFactoryOptions
@@ -426,6 +482,8 @@ public sealed class SpeechService : IDisposable
                 GpuDevice = _gpuDevice
             });
         }
+
+        if (_factory != null) OnDebug?.Invoke("MODEL_LOADED");
         var factory = _factory;
 
         using var processor = factory.CreateBuilder()

@@ -374,7 +374,7 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [level, setLevel] = useState(0);
-  const [overlay, setOverlay] = useState<"off" | "recording" | "transcribing" | "ready">("off");
+  const [overlay, setOverlay] = useState<"off" | "recording" | "transcribing" | "loading-model" | "ready">("off");
   const [compactView, setCompactView] = useState(window.innerHeight < 260);
   const [overlayText, setOverlayText] = useState<string | null>(null);
   const [availableUpdate, setAvailableUpdate] = useState<UpdatePayload | null>(null);
@@ -415,7 +415,11 @@ export default function App() {
           if (s !== "transcribing") setError(null);
         };
         backend.onLevel = (v) => setLevel(Math.max(0, Math.min(1, v)));
-        backend.onDebug = (line) => setDebugLines((old) => [...old, line].slice(-300));
+        backend.onDebug = (line) => {
+          setDebugLines((old) => [...old, line].slice(-300));
+          if (line.includes("MODEL_LOADING")) setOverlay("loading-model");
+          else if (line.includes("MODEL_LOADED")) setOverlay((o) => o === "loading-model" ? "transcribing" : o);
+        };
         backend.onResult = (r) => {
           setResult(r); setError(null);
           if (r.text.trim()) {
@@ -550,16 +554,16 @@ export default function App() {
         <div className={`overlay-card overlay-bar ${overlay}`}>
           <span className="overlay-light" />
           <div className="overlay-copy">
-            <b>{overlay === "recording" ? t("overlayRecording") : overlay === "transcribing" ? t("overlayTranscribing") : overlay === "ready" ? t("overlayReady") : t("ready")}</b>
+            <b>{overlay === "recording" ? t("overlayRecording") : overlay === "transcribing" ? t("overlayTranscribing") : overlay === "loading-model" ? t("modelLoading") : overlay === "ready" ? t("overlayReady") : t("ready")}</b>
             {overlay === "recording"
               ? <small>{t("overlaySpeak")}</small>
-              : overlay === "transcribing"
-                ? <small>{t("overlayTranscribingLabel")}</small>
+              : overlay === "transcribing" || overlay === "loading-model"
+                ? <small>{overlay === "loading-model" ? t("modelLoading") : t("overlayTranscribingLabel")}</small>
                 : overlay === "ready"
                   ? <small>{t("overlayPaste")}</small> : null}
             {overlay === "ready" && overlayText && <span className="overlay-text">{overlayText}</span>}
           </div>
-          {overlay === "recording" ? <MiniOsc width={150} height={54} level={level} /> : overlay === "transcribing" ? <Loader2 size={18} className="spin" /> : overlay === "ready" ? <Check size={22} /> : null}
+          {overlay === "recording" ? <MiniOsc width={150} height={54} level={level} /> : overlay === "transcribing" || overlay === "loading-model" ? <Loader2 size={18} className="spin" /> : overlay === "ready" ? <Check size={22} /> : null}
         </div>
       </div>
     );

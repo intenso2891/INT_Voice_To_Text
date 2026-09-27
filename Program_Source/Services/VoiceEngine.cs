@@ -56,6 +56,7 @@ public sealed class VoiceEngine : IDisposable
         _speech.ConfigureCompute(state.ComputeMode, state.GpuDevice);
         _recorder.LevelAvailable += level => Broadcast("level", new { level });
         _speech.ProgressChanged += progress => Broadcast("modelProgress", new { bytes = progress.Bytes, totalBytes = progress.TotalBytes, percent = progress.Percent, completed = progress.Completed });
+        _speech.OnDebug += msg => Broadcast("onDebug", msg);
     }
 
     /// <summary>Start hotkey hosting. Call once after the hub context is wired.</summary>
