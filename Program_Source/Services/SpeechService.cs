@@ -35,6 +35,7 @@ public sealed class SpeechService : IDisposable
     public string? ModelPath { get; private set; }
     private bool _useGpu;
     private int _gpuDevice;
+    private string _gpuBackend = "none"; // none | vulkan | cuda | auto
     public bool IsReady => !string.IsNullOrEmpty(ModelPath);
 
     /// <summary>Last error from EnsureModelAsync (for diagnostics).</summary>
@@ -93,6 +94,13 @@ public sealed class SpeechService : IDisposable
     {
         lock (_gate)
         {
+            _gpuBackend = mode switch
+            {
+                "gpu-nvidia" => "cuda",
+                "gpu-vulkan" => "vulkan",
+                "hybrid" => "auto",
+                _ => "none"
+            };
             _useGpu = !string.Equals(mode, "cpu", StringComparison.OrdinalIgnoreCase);
             _gpuDevice = Math.Max(0, gpuDevice);
             _factory?.Dispose();
@@ -459,13 +467,29 @@ public sealed class SpeechService : IDisposable
         return new { exeDir, tempDir = targetBase, deployed = _nativeDeployed, dlls = items };
     }
 
-    /// <summary>Transcribe float32 16 kHz mono samples into text (Whisper, local).</summary>
+    /// <summary>Transcribe float32 16 kHz mono samples into text (Whisper, local).
+    /// If GPU mode crashes, auto-falls back to CPU.</summary>
     public async Task<string> TranscribeAsync(float[] samples, string language, CancellationToken ct = default)
     {
         if (IsDownloading) throw new InvalidOperationException("MODEL_DOWNLOADING");
         if (!IsReady) await EnsureModelAsync(ct);
         if (string.IsNullOrEmpty(ModelPath)) throw new InvalidOperationException("STT model is not available.");
 
+        try
+        {
+            return await TranscribeInternalAsync(samples, language, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (_useGpu && ex is not OperationCanceledException)
+        {
+            // GPU mode crashed → fall back to CPU
+            OnDebug?.Invoke($"GPU_FAILED: {ex.Message} — переключаюсь на CPU...");
+            ConfigureCompute("cpu", 0);
+            return await TranscribeInternalAsync(samples, language, ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<string> TranscribeInternalAsync(float[] samples, string language, CancellationToken ct)
+    {
         DeployNativeLibraries();
 
         // First-time model loading can take 10-60s for large models

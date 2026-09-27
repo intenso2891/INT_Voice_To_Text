@@ -718,9 +718,10 @@ export default function App() {
             <div className="field-row">
               <span className="row-label"><Cpu size={15} /> {t("computeTitle")}</span><Tip text={t("computeHint")} />
               <select value={info.computeMode} onChange={(e) => setComputeMode(e.target.value)}>
-                <option value="cpu">CPU</option>
-                <option value="gpu">GPU</option>
-                <option value="hybrid">CPU + GPU</option>
+                <option value="cpu">CPU (безопасно)</option>
+                <option value="gpu-vulkan">GPU — Vulkan (AMD/Intel)</option>
+                <option value="gpu-nvidia">GPU — NVIDIA (CUDA)</option>
+                <option value="hybrid">CPU + GPU (гибрид)</option>
               </select>
             </div>
           </div>

@@ -26,7 +26,7 @@ public sealed class AppState
     public bool DebugMode { get; set; } = false;
     public bool StartWithWindows { get; set; } = false;
     public bool MinimizeToTrayOnClose { get; set; } = true;
-    public string ComputeMode { get; set; } = "cpu"; // cpu | gpu | hybrid
+    public string ComputeMode { get; set; } = "cpu"; // cpu | gpu-vulkan | gpu-nvidia | hybrid
     public int GpuDevice { get; set; } = 0;
 
     private static string SettingsDir => Path.Combine(
