@@ -100,11 +100,34 @@ public sealed class SpeechService : IDisposable
             {
                 "gpu-nvidia" => "cuda",
                 "gpu-vulkan" => "vulkan",
-                "hybrid" => "auto",
+                "hybrid-nvidia" => "cuda-hybrid",
+                "hybrid-vulkan" => "vulkan-hybrid",
                 _ => "none"
             };
-            _useGpu = !string.Equals(mode, "cpu", StringComparison.OrdinalIgnoreCase);
+            _useGpu = mode is "gpu-nvidia" or "gpu-vulkan" or "hybrid-nvidia" or "hybrid-vulkan";
             _gpuDevice = Math.Max(0, gpuDevice);
+
+            // Force the GPU backend via Whisper.net RuntimeLibraryOrder
+            try
+            {
+                Whisper.net.LibraryLoader.RuntimeOptions.RuntimeLibraryOrder = _gpuBackend switch
+                {
+                    "cuda" or "cuda-hybrid" => new List<Whisper.net.LibraryLoader.RuntimeLibrary>
+                    {
+                        Whisper.net.LibraryLoader.RuntimeLibrary.Cuda,
+                        Whisper.net.LibraryLoader.RuntimeLibrary.Cuda12,
+                        Whisper.net.LibraryLoader.RuntimeLibrary.Cpu,
+                    },
+                    "vulkan" or "vulkan-hybrid" => new List<Whisper.net.LibraryLoader.RuntimeLibrary>
+                    {
+                        Whisper.net.LibraryLoader.RuntimeLibrary.Vulkan,
+                        Whisper.net.LibraryLoader.RuntimeLibrary.Cpu,
+                    },
+                    _ => new List<Whisper.net.LibraryLoader.RuntimeLibrary> { Whisper.net.LibraryLoader.RuntimeLibrary.Cpu },
+                };
+            }
+            catch { }
+
             _factory?.Dispose();
             _factory = null;
         }
@@ -426,7 +449,7 @@ public sealed class SpeechService : IDisposable
         lock (_nativeLock)
         {
             var exeDir = ExeDir();
-            string[] dlls = { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-vulkan-whisper.dll" };
+            string[] dlls = { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-vulkan-whisper.dll", "ggml-cuda-whisper.dll" };
             var report = new System.Text.StringBuilder();
             int deployed = 0;
 

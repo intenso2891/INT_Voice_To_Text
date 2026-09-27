@@ -14,7 +14,7 @@ public sealed record HotkeyConfig(
 
 public sealed class AppState
 {
-    public const string AppVersion = "1.6.19";
+    public const string AppVersion = "1.6.20";
     private static readonly JsonSerializerOptions JsonOpts = new()
     { WriteIndented = true };
 
@@ -26,7 +26,7 @@ public sealed class AppState
     public bool DebugMode { get; set; } = false;
     public bool StartWithWindows { get; set; } = false;
     public bool MinimizeToTrayOnClose { get; set; } = true;
-    public string ComputeMode { get; set; } = "cpu"; // cpu | gpu-vulkan | gpu-nvidia | hybrid
+    public string ComputeMode { get; set; } = "cpu"; // cpu | gpu-vulkan | gpu-nvidia | hybrid-vulkan | hybrid-nvidia
     public int GpuDevice { get; set; } = 0;
 
     private static string SettingsDir => Path.Combine(

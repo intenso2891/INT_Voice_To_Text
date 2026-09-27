@@ -740,7 +740,8 @@ export default function App() {
                 <option value="cpu">CPU (безопасно)</option>
                 <option value="gpu-vulkan">GPU — Vulkan (AMD/Intel)</option>
                 <option value="gpu-nvidia">GPU — NVIDIA (CUDA)</option>
-                <option value="hybrid">CPU + GPU (гибрид)</option>
+                <option value="hybrid-vulkan">CPU + GPU — Vulkan</option>
+                <option value="hybrid-nvidia">CPU + GPU — NVIDIA (CUDA)</option>
               </select>
             </div>
           </div>

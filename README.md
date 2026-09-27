@@ -4,7 +4,7 @@
 
 Офлайн-приложение для Windows: нажал глобальную горячую клавишу → сказал → распознанный текст автоматически в буфере обмена (и при желании вставлен `Ctrl+V` в любое окно). Работает полностью локально — голос никуда не отправляется.
 
-![Version](https://img.shields.io/badge/версия-1.6.4-8b7cff?style=for-the-badge&labelColor=0d1221)
+![Version](https://img.shields.io/badge/версия-1.6.12-8b7cff?style=for-the-badge&labelColor=0d1221)
 ![Platform](https://img.shields.io/badge/Windows-10%2F11-5ee7d1?style=for-the-badge&labelColor=0d1221)
 ![Offline](https://img.shields.io/badge/работает-офлайн-63e6a6?style=for-the-badge&labelColor=0d1221)
 ![Made by](https://img.shields.io/badge/Created%20by-INTENSO.Dev-ff6680?style=for-the-badge&labelColor=0d1221)
@@ -50,7 +50,44 @@ INT_Voice_To_Text/
 > [!NOTE]
 > Требуется Windows 10/11 и установленный **WebView2 Runtime** (обычно уже есть).
 >
-> При первом запуске программа один раз скачает модель Whisper Large V3 (~3 ГБ). После этого всё работает полностью офлайн.
+> При первом запуске программа предложит скачать модель Whisper. Всё работает полностью офлайн.
+
+---
+
+## 💻 Системные требования
+
+### Обязательно (для всех режимов)
+| Компонент | Требование |
+|-----------|-----------|
+| ОС | Windows 10 / 11 (x64) |
+| [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) | Уже установлен в Windows 11; для Windows 10 — скачать |
+| [Microsoft Visual C++ Redistributable 2022](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) (x64) | Уже установлен у большинства; если нет — скачать |
+| Оперативная память | от 4 ГБ (модель Tiny) до 8 ГБ (Large V3) |
+
+### Для GPU — NVIDIA (CUDA)
+| Компонент | Требование |
+|-----------|-----------|
+| Видеокарта | NVIDIA с поддержкой CUDA (GeForce GTX 10xx и новее) |
+| Драйвер NVIDIA | Последний с сайта nvidia.ru |
+| [CUDA Toolkit 12.4+](https://developer.nvidia.com/cuda-downloads) | **Обязательно** — скачать и установить |
+
+> [!IMPORTANT]
+> Без CUDA Toolkit режим **NVIDIA (CUDA)** не будет работать. Если CUDA Toolkit не установлен — выберите **CPU** в настройках.
+
+### Для GPU — Vulkan (AMD / Intel)
+| Компонент | Требование |
+|-----------|-----------|
+| Видеокарта | AMD Radeon / Intel Arc / Intel Iris Xe |
+| [Vulkan Runtime](https://vulkan.lunarg.com/sdk/home) | Обычно уже установлен с драйвером видеокарты |
+
+### Режимы распознавания
+| Режим | Для кого | Скорость |
+|-------|----------|----------|
+| **CPU** | Все ПК (безопасно) | Медленнее |
+| **GPU — NVIDIA (CUDA)** | GeForce / RTX | Быстро |
+| **GPU — Vulkan** | AMD / Intel | Быстро |
+| **CPU + GPU — NVIDIA** | Гибридный режим | Средне |
+| **CPU + GPU — Vulkan** | Гибридный режим | Средне |
 
 ---
 

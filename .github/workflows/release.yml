@@ -80,7 +80,7 @@ jobs:
 
           # ── Source 2: NuGet cache (whisper.net.runtime*) ──
           $nugetCache = ((dotnet nuget locals global-packages --list) -replace 'global-packages:\s*','').Trim()
-          $whisperPkgs = @('whisper.net.runtime','whisper.net.runtime.vulkan','whisper.net.runtime.noavx')
+          $whisperPkgs = @('whisper.net.runtime','whisper.net.runtime.vulkan','whisper.net.runtime.cuda.windows','whisper.net.runtime.cuda12.windows','whisper.net.runtime.noavx')
           foreach ($pkg in $whisperPkgs) {
             $found = Get-ChildItem (Join-Path $nugetCache "$pkg") -Directory -ErrorAction SilentlyContinue |
                      Sort-Object Name -Descending | Select-Object -First 1
@@ -101,7 +101,7 @@ jobs:
           }
 
           # ── VERIFY critical DLLs exist ──
-          $critical = @('whisper.dll','ggml-whisper.dll','ggml-base-whisper.dll','ggml-cpu-whisper.dll')
+          $critical = @('whisper.dll','ggml-whisper.dll','ggml-base-whisper.dll','ggml-cpu-whisper.dll','ggml-cuda-whisper.dll')
           $missing = @()
           foreach ($c in $critical) {
             $inRoot = Test-Path "Program\$c"
