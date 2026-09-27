@@ -39,20 +39,33 @@ public sealed class SpeechService : IDisposable
     /// <summary>Last error from EnsureModelAsync (for diagnostics).</summary>
     public string? LastError { get; private set; }
 
-    /// <summary>List all model files in the models/ directory with sizes.</summary>
+    /// <summary>List all model files across all candidate directories with sizes.</summary>
     public static object GetModelList()
     {
-        var dir = Path.Combine(ExeDir(), "models");
-        var files = new List<object>();
-        if (Directory.Exists(dir))
+        var candidates = new List<string>
         {
+            Path.Combine(AppContext.BaseDirectory, "models"),
+            Path.Combine(ExeDir(), "models"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                         "INT_VoiceToText", "models"),
+        };
+        var files = new List<object>();
+        var dirs = new List<object>();
+        var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dir in candidates.Distinct())
+        {
+            var exists = Directory.Exists(dir);
+            dirs.Add(new { path = dir, exists });
+            if (!exists) continue;
             foreach (var f in Directory.EnumerateFiles(dir).OrderByDescending(File.GetLastWriteTimeUtc))
             {
+                var key = Path.GetFileName(f).ToLowerInvariant();
+                if (!found.Add(key)) continue; // skip duplicates (show first found)
                 var info = new FileInfo(f);
-                files.Add(new { name = Path.GetFileName(f), sizeMB = Math.Round(info.Length / 1048576.0, 1), valid = FileValid(f) });
+                files.Add(new { name = Path.GetFileName(f), sizeMB = Math.Round(info.Length / 1048576.0, 1), valid = FileValid(f), location = dir });
             }
         }
-        return new { modelsDir = dir, dirExists = Directory.Exists(dir), files };
+        return new { dirs, files };
     }
 
     /// <summary>Force a fresh download attempt (resets cached state).</summary>

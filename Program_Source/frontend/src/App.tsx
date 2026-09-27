@@ -48,7 +48,7 @@ function ModelFilesList({ backend }: { backend: BackendType }) {
           {files === null && <span className="runtime-dll">…</span>}
           {files && files.length === 0 && <span className="runtime-dll missing">{t("modelFilesEmpty")}</span>}
           {files && files.map(f => (
-            <span key={f.name} className={"runtime-dll" + (f.valid ? " ok" : " missing")}>
+            <span key={f.name + f.location} className={"runtime-dll" + (f.valid ? " ok" : " missing")}>
               {f.valid ? "✓" : "✗"} {f.name} <small>({f.sizeMB} МБ)</small>
             </span>
           ))}

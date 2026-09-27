@@ -29,11 +29,16 @@ export interface ModelFile {
   name: string;
   sizeMB: number;
   valid: boolean;
+  location: string;
+}
+
+export interface ModelDir {
+  path: string;
+  exists: boolean;
 }
 
 export interface ModelListDto {
-  modelsDir: string;
-  dirExists: boolean;
+  dirs: ModelDir[];
   files: ModelFile[];
 }
 
