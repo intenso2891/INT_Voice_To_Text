@@ -27,8 +27,9 @@
     <PackageReference Include="NAudio" Version="2.2.1" />
     <!-- Whisper.net — local offline speech-to-text (whisper.cpp wrapper) -->
     <PackageReference Include="Whisper.net" Version="*" />
-    <!-- CPU + CUDA/Vulkan/OpenVINO runtimes for selectable CPU/GPU recognition -->
-    <PackageReference Include="Whisper.net.AllRuntimes" Version="1.9.1" />
+    <!-- CPU runtime. Vulkan runtime added separately. CUDA DLL is in cuda/ dir (manual deploy). -->
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
+    <PackageReference Include="Whisper.net.Runtime.Vulkan" Version="1.9.1" />
   </ItemGroup>
 
   <!-- Ship the offline speech model INSIDE the single-file exe (embedded at publish) -->

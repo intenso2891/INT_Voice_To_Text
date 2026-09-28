@@ -38,6 +38,7 @@ public sealed class SpeechService : IDisposable
     private bool _useGpu;
     private int _gpuDevice;
     private string _gpuBackend = "none"; // none | vulkan | cuda | auto
+    private string _currentMode = "cpu"; // cpu | gpu-vulkan | gpu-nvidia | hybrid-vulkan | hybrid-nvidia
     public bool IsReady => !string.IsNullOrEmpty(ModelPath);
 
     /// <summary>Last error from EnsureModelAsync (for diagnostics).</summary>
@@ -96,17 +97,7 @@ public sealed class SpeechService : IDisposable
     {
         lock (_gate)
         {
-            // NVIDIA mode requires CUDA Toolkit — warn if not available
-            if ((mode == "gpu-nvidia" || mode == "hybrid-nvidia") && !IsCudaAvailable())
-            {
-                LastError = "CUDA_NOT_FOUND: CUDA Toolkit не установлен. Скачайте с https://developer.nvidia.com/cuda-downloads или выберите CPU.";
-                _useGpu = false;
-                _gpuBackend = "none";
-                _factory?.Dispose();
-                _factory = null;
-                return;
-            }
-
+            _currentMode = mode;
             _gpuBackend = mode switch
             {
                 "gpu-nvidia" => "cuda",
@@ -117,6 +108,9 @@ public sealed class SpeechService : IDisposable
             };
             _useGpu = mode is "gpu-nvidia" or "gpu-vulkan" or "hybrid-nvidia" or "hybrid-vulkan";
             _gpuDevice = Math.Max(0, gpuDevice);
+
+            // Deploy correct native libraries for this mode
+            DeployNativeLibraries(mode);
 
             // Force the GPU backend via Whisper.net RuntimeLibraryOrder
             try
@@ -447,31 +441,41 @@ public sealed class SpeechService : IDisposable
     private static readonly object _nativeLock = new();
 
     /// <summary>
-    /// Deploy native Whisper DLLs to the EXACT paths Whisper.net searches.
-    ///
-    /// From Whisper.net source (NativeLibraryLoader.GetRuntimePaths):
-    ///   runtimePath = Path.Combine(assemblySearchPath, "runtimes", "win-x64")
-    ///   whisperPath = Path.Combine(runtimePath, "whisper.dll")
-    ///
-    /// So DLLs must be in &lt;searchPath&gt;/runtimes/win-x64/ (NOT runtimes/win-x64/native/!)
+    /// Deploy native Whisper DLLs for the selected compute mode.
+    /// CRITICAL: ggml-cuda-whisper.dll MUST NOT be in runtimes/win-x64/ unless NVIDIA mode is active.
+    /// Whisper.net NativeLibraryLoader scans ALL DLLs in runtimes/win-x64/ and loads them.
+    /// If ggml-cuda-whisper.dll is present but CUDA runtime is missing/incompatible → ucrtbase c0000409 crash.
     /// </summary>
-    public static string DeployNativeLibraries()
+    public static string DeployNativeLibraries(string mode = "cpu")
     {
         lock (_nativeLock)
         {
             var exeDir = ExeDir();
-            // CUDA DLL only if CUDA Toolkit is installed — otherwise ucrtbase fail-fast crash (c0000409)
-            var cudaAvailable = IsCudaAvailable();
-            string[] dlls = cudaAvailable
-                ? new[] { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-vulkan-whisper.dll", "ggml-cuda-whisper.dll" }
-                : new[] { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-vulkan-whisper.dll" };
+            var useCuda = mode is "gpu-nvidia" or "hybrid-nvidia";
+            var useVulkan = mode is "gpu-vulkan" or "hybrid-vulkan";
+
+            // 1. ALWAYS remove GPU DLLs from ALL runtime search paths first (safety)
+            foreach (var baseDir in new[] { AppContext.BaseDirectory, exeDir })
+            {
+                foreach (var sub in new[] { "", "runtimes/win-x64", "runtimes/win-x64/native", "runtimes/cuda/win-x64", "runtimes/cuda12/win-x64", "runtimes/vulkan/win-x64" })
+                {
+                    foreach (var gpuDll in new[] { "ggml-cuda-whisper.dll", "ggml-vulkan-whisper.dll" })
+                    {
+                        var p = Path.Combine(baseDir, sub, gpuDll);
+                        try { if (File.Exists(p)) File.Delete(p); } catch { }
+                    }
+                }
+            }
+
+            // 2. Build DLL list for this mode
+            var dllList = new List<string> { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll" };
+            if (useVulkan) dllList.Add("ggml-vulkan-whisper.dll");
+            if (useCuda) dllList.Add("ggml-cuda-whisper.dll");
+            string[] dlls = dllList.ToArray();
+
+            // 3. Deploy DLLs to runtimes/win-x64/ (Whisper.net search path)
             var report = new System.Text.StringBuilder();
             int deployed = 0;
-
-            // Whisper.net searches these directories for runtimes/win-x64/*.dll:
-            // 1. AppContext.BaseDirectory (temp dir for single-file)
-            // 2. Exe directory (from GetCommandLineArgs)
-            // 3. Assembly.Location directory
             var searchBases = new List<string> { AppContext.BaseDirectory, exeDir };
 
             foreach (var baseDir in searchBases.Distinct())
@@ -484,7 +488,8 @@ public sealed class SpeechService : IDisposable
                 foreach (var dll in dlls)
                 {
                     string? src = null;
-                    foreach (var srcDir in new[] { Path.Combine(exeDir, "runtimes", "win-x64"), Path.Combine(exeDir, "runtimes", "win-x64", "native"), exeDir })
+                    // Search in exeDir subdirs for the source DLL
+                    foreach (var srcDir in new[] { Path.Combine(exeDir, "runtimes", "win-x64"), Path.Combine(exeDir, "runtimes", "win-x64", "native"), Path.Combine(exeDir, "cuda"), exeDir })
                     {
                         var p = Path.Combine(srcDir, dll);
                         if (File.Exists(p)) { src = p; break; }
@@ -558,6 +563,13 @@ public sealed class SpeechService : IDisposable
                 ConfigureCompute("cpu", 0);
                 return await TranscribeInternalAsync(samples, language, ct).ConfigureAwait(false);
             }
+            catch (TimeoutException)
+            {
+                OnDebug?.Invoke("GPU_TIMEOUT: модель не загрузилась за 30 сек (GPU завис) — переключаюсь на CPU...");
+                _factory?.Dispose(); _factory = null;
+                ConfigureCompute("cpu", 0);
+                return await TranscribeInternalAsync(samples, language, ct).ConfigureAwait(false);
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 OnDebug?.Invoke($"GPU_FAILED: {ex.Message} — переключаюсь на CPU...");
@@ -571,7 +583,7 @@ public sealed class SpeechService : IDisposable
 
     private async Task<string> TranscribeInternalAsync(float[] samples, string language, CancellationToken ct)
     {
-        DeployNativeLibraries();
+        DeployNativeLibraries(_currentMode);
 
         // First-time model loading can take 10-60s for large models
         if (_factory == null)
@@ -579,13 +591,21 @@ public sealed class SpeechService : IDisposable
             OnDebug?.Invoke($"MODEL_LOADING size={new FileInfo(ModelPath!).Length / 1024 / 1024}MB — загрузка модели в память, подождите...");
         }
 
-        lock (_gate)
+        // CRITICAL: WhisperFactory.FromPath is BLOCKING and can hang on GPU init (Vulkan/CUDA).
+        // Run it in a Task with timeout so we can fall back to CPU if GPU hangs.
+        if (_factory == null)
         {
-            _factory ??= WhisperFactory.FromPath(ModelPath!, new WhisperFactoryOptions
+            _factory = await Task.Run(() =>
             {
-                UseGpu = _useGpu,
-                GpuDevice = _gpuDevice
-            });
+                lock (_gate)
+                {
+                    return _factory ??= WhisperFactory.FromPath(ModelPath!, new WhisperFactoryOptions
+                    {
+                        UseGpu = _useGpu,
+                        GpuDevice = _gpuDevice
+                    });
+                }
+            }, ct).WaitAsync(TimeSpan.FromSeconds(_useGpu ? 30 : 120), ct).ConfigureAwait(false) ?? throw new TimeoutException("MODEL_LOAD_TIMEOUT");
         }
 
         if (_factory != null) OnDebug?.Invoke("MODEL_LOADED");
@@ -608,6 +628,16 @@ public sealed class SpeechService : IDisposable
     }
 
     /// <summary>Directory of the running executable (works with single-file publish).</summary>
+    /// <summary>Check if Vulkan Runtime is available (vulkan-1.dll in System32).</summary>
+    private static bool IsVulkanAvailable()
+    {
+        try
+        {
+            return File.Exists(Path.Combine(Environment.SystemDirectory, "vulkan-1.dll"));
+        }
+        catch { return false; }
+    }
+
     /// <summary>Check if CUDA Toolkit is installed (cudart64_*.dll in system32 or CUDA_PATH set).</summary>
     private static bool IsCudaAvailable()
     {
