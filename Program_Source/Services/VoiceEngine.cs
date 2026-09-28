@@ -242,13 +242,24 @@ public sealed class VoiceEngine : IDisposable
         var dlls = new List<object>();
         foreach (var name in critical)
         {
-            var fullPath = Path.Combine(dir, name);
-            var exists = File.Exists(fullPath);
+            // Whisper.net probes: app root, runtimes/win-x64/ (NOT .../native/), and the
+            // single-file self-extract temp dir (AppContext.BaseDirectory).
+            var candidates = new[]
+            {
+                Path.Combine(dir, name),
+                Path.Combine(dir, "runtimes", "win-x64", name),
+                Path.Combine(AppContext.BaseDirectory, name),
+                Path.Combine(AppContext.BaseDirectory, "runtimes", "win-x64", name),
+            };
+            var fullPath = candidates.FirstOrDefault(File.Exists);
+            var exists = fullPath != null;
             var size = exists ? new FileInfo(fullPath).Length : 0L;
             dlls.Add(new { name, exists, sizeKB = size / 1024 });
         }
-        var nativeDir = Path.Combine(dir, "runtimes", "win-x64", "native");
-        return new { directory = dir, runtimesDirExists = Directory.Exists(nativeDir), dlls };
+        // The real Whisper.net search dir is runtimes/win-x64/ (not .../native/).
+        var runtimeDir = Path.Combine(dir, "runtimes", "win-x64");
+        var runtimesDirExists = Directory.Exists(runtimeDir) && Directory.EnumerateFiles(runtimeDir, "*.dll").Any();
+        return new { directory = dir, runtimesDirExists, dlls };
     }
 
     /// <summary>True while the large model is being downloaded for the first time.</summary>

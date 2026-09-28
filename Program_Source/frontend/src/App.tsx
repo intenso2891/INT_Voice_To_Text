@@ -886,7 +886,7 @@ export default function App() {
               </div>
               <div className="runtime-dlls" style={{marginTop: 4}}>
                 <span className={"runtime-dll" + (info.runtime.runtimesDirExists ? " ok" : " missing")}>
-                  {info.runtime.runtimesDirExists ? "✓" : "✗"} runtimes/win-x64/native/
+                  {info.runtime.runtimesDirExists ? "✓" : "✗"} runtimes/win-x64/
                 </span>
               </div>
               {/* Repair button — deploys DLLs to the correct search paths */}
