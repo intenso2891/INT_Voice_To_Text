@@ -63,50 +63,13 @@ jobs:
           Copy-Item Program_Source\library_words\words.txt Program\library_words\words.txt -Force
           Copy-Item Program_Source\Install-Requirements.ps1,Program_Source\Install-Requirements.bat Program -Force
 
-          $nativeDir = 'Program\runtimes\win-x64'
-
-          # dotnet publish already emits the correct layout next to the exe:
-          #   runtimes/win-x64/            ← CPU DLLs (whisper.dll + ggml-{base,cpu,whisper})
-          #   runtimes/vulkan/win-x64/     ← Vulkan DLLs (from Whisper.net.Runtime.Vulkan targets)
-          # The single-file exe self-extracts the same layout into %TEMP%\.net\INT_VoiceToText\...\.
-          # CUDA is NOT shipped — it is downloaded on demand when the user selects NVIDIA mode.
-          #
-          # CRITICAL: never place ggml-vulkan-whisper.dll / ggml-cuda-whisper.dll into runtimes/win-x64/.
-          # The loader loads every ggml-*.dll found in that folder, so a stray GPU DLL crashes
-          # (0xc0000409) on NVIDIA machines even in CPU mode.
-
-          # ── Copy CPU DLLs to Program root as an extra fallback search path ──
-          $rootDlls = @('whisper.dll','ggml-whisper.dll','ggml-base-whisper.dll','ggml-cpu-whisper.dll')
-          foreach ($d in $rootDlls) {
-            if (Test-Path "$nativeDir\$d") { Copy-Item "$nativeDir\$d" Program -Force }
-          }
-
-          # ── VERIFY: no GPU DLL may remain in runtimes/win-x64/ (or its native/ subfolder) ──
-          foreach ($sub in @($nativeDir, "$nativeDir\native")) {
-            foreach ($bad in @('ggml-cuda-whisper.dll','ggml-vulkan-whisper.dll')) {
-              $p = Join-Path $sub $bad
-              if (Test-Path $p) {
-                Remove-Item $p -Force
-                Write-Host "REMOVED $bad from $sub (GPU DLL in CPU folder crashes on NVIDIA)"
-              }
-            }
-          }
-
-          # ── VERIFY critical DLLs exist ──
-          $critical = @('whisper.dll','ggml-whisper.dll','ggml-base-whisper.dll','ggml-cpu-whisper.dll')
-          $missing = @()
-          foreach ($c in $critical) {
-            $inNative = Test-Path "$nativeDir\$c"
-            Write-Host "  $c runtimes/win-x64=$inNative"
-            if (-not $inNative) { $missing += $c }
-          }
-          if ($missing.Count -gt 0) { throw "MISSING critical native DLLs: $($missing -join ', ')" }
-
-          # ── Report sizes ──
-          $nativeSize = (Get-ChildItem $nativeDir -File | Measure-Object -Property Length -Sum).Sum
-          $totalSize = (Get-ChildItem Program -Recurse -File | Measure-Object -Property Length -Sum).Sum
-          Write-Host "runtimes/win-x64/native: $([math]::Round($nativeSize / 1MB, 1)) MB"
-          Write-Host "Program total: $([math]::Round($totalSize / 1MB, 1)) MB"
+          # Native Whisper DLLs are embedded inside the single-file exe
+          # (IncludeNativeLibrariesForSelfExtract=true) and self-extract on first run to
+          #   %TEMP%\.net\INT_VoiceToText\...\runtimes\win-x64\      (CPU)
+          #   %TEMP%\.net\INT_VoiceToText\...\runtimes\vulkan\win-x64\ (Vulkan)
+          # So no external DLL copying is needed — and none must be done, because a stray
+          # ggml-vulkan/cuda-whisper.dll beside whisper.dll crashes (0xc0000409) on NVIDIA
+          # machines even in CPU mode. CUDA is downloaded on demand when NVIDIA mode is selected.
 
           Remove-Item Program\*.pdb -Force -ErrorAction SilentlyContinue
           Remove-Item Program\models -Recurse -Force -ErrorAction SilentlyContinue
