@@ -69,31 +69,38 @@ INT_Voice_To_Text/
 ### 3.1. НЕ УДАЛЯТЬ `Program/models/ggml-large-v3.bin`
 Модель Whisper Large V3 (2.95 ГБ). Пользователь просил **не удалять папку Program** при деплое — иначе придётся перекачивать модель. При публикации (`dotnet publish`) модель **не перезаписывается** — она остаётся.
 
-### 3.2. Краш `c0000409` в `ucrtbase.dll` — ТЕКУЩАЯ ПРОБЛЕМА
-**Симптом:** приложение падает через 1-2 секунды после остановки записи (начало распознавания). Код исключения `0xc0000409` (STATUS_STACK_BUFFER_OVERRUN), модуль `ucrtbase.dll`. Происходит **у NVIDIA пользователей даже в CPU режиме**.
+### 3.2. Краш `c0000409` в `ucrtbase.dll` — НАЙДЕНА КОРНЕВАЯ ПРИЧИНА (v1.6.24)
+**Симптом:** приложение падает через 1-2 секунды после остановки записи (начало распознавания). Код `0xc0000409` (STATUS_STACK_BUFFER_OVERRUN), модуль `ucrtbase.dll`. У NVIDIA пользователей **даже в CPU режиме**; на AMD работает.
 
-**История попыток исправления:**
-1. **v1.6.19** — работало стабильно (был `Whisper.net.AllRuntimes`, но CUDA DLL не копировался в temp)
-2. **v1.6.20** — добавили CUDA DLL из `whisper.net.runtime.cuda12.windows` → начались краши
-3. **v1.6.21** — добавили `IsCudaAvailable()` проверку → краш остался (DLL уже была на диске в `runtimes/win-x64/`)
-4. **v1.6.22** — перенесли CUDA DLL в `cuda/` папку, убираем из `runtimes/win-x64/` → **краш всё равно есть**
-5. **v1.6.23** — добавили авто-скачивание CUDA DLL → **краш всё равно есть**
+**КОРНЕВАЯ ПРИЧИНА (подтверждена исходниками whisper.net 1.9.1):**
 
-**Корень проблемы (по анализу):**
-- `Whisper.net.NativeLibraryLoader` сканирует `runtimes/win-x64/` и пытается загрузить **ВСЕ** DLL из этой папки
-- Даже если CUDA DLL **не** в `runtimes/win-x64/`, **Vulkan DLL** (`ggml-vulkan-whisper.dll`, 55 МБ) **есть** там
-- У NVIDIA пользователей Vulkan driver нестабилен → `ggml-vulkan-whisper.dll` крашится при загрузке
-- Краш происходит **до** того как .NET успевает обработать исключение — это нативный fail-fast
+Whisper.net раскладывает нативные DLL по РАЗНЫМ подпапкам (`RuntimePathResolver.GetRuntimePath`):
+```
+CPU    → runtimes/win-x64/
+Vulkan → runtimes/vulkan/win-x64/
+CUDA   → runtimes/cuda/win-x64/  (и cuda12/win-x64/)
+```
 
-**Что НЕ пробовали:**
-- Полностью убрать `ggml-vulkan-whisper.dll` из сборки (оставить только CPU)
-- Использовать `Whisper.net.Runtime.NoAvx` вместо `Whisper.net.Runtime` (может помочь на старых CPU)
-- Обновить Whisper.net до последней версии (сейчас `1.9.1`)
-- Попробовать `whisper.net.runtime.cuda.windows` (CUDA 13) вместо `cuda12`
-- Загружать WhisperFactory в отдельном процессе (изоляция краша)
+Но `NativeLibraryLoader.LoadLibraryComponent` для выбранного runtime сканирует `dependencyOrder` (список ВСЕХ `ggml-*.dll`, включая `ggml-cuda-whisper` и `ggml-vulkan-whisper`) **в той же папке runtimePath** и загружает всё, что там физически лежит:
 
-**Гипотеза для следующего разработчика:**
-> Краш `c0000409` скорее всего вызван **`ggml-vulkan-whisper.dll`**, а не CUDA. Этот DLL крашится на системах с NVIDIA драйверами (которые имеют свой Vulkan ICD). Решение: **полностью убрать GPU DLL из `runtimes/win-x64/`** — оставить ТОЛЬКО `whisper.dll`, `ggml-whisper.dll`, `ggml-base-whisper.dll`, `ggml-cpu-whisper.dll`. GPU поддержку добавить позже через изолированный процесс.
+```csharp
+foreach (var dependency in dependencyOrder) {
+    var dependencyPath = GetLibraryPath(platform, dependency, runtimePath); // ТА ЖЕ папка
+    if (File.Exists(dependencyPath)) { /* TryOpenLibrary → может крашнуться */ }
+}
+```
+
+Поэтому если `ggml-vulkan-whisper.dll` / `ggml-cuda-whisper.dll` **случайно лежит в `runtimes/win-x64/`** (папка CPU), loader грузит его **даже в CPU режиме**. На несовместимом GPU-драйвере (NVIDIA) нативный код делает fail-fast `0xc0000409`, который НЕ ловится try/catch.
+
+**Где была ошибка:** старый `DeployNativeLibraries` и `release.yml` вручную копировали Vulkan DLL в `runtimes/win-x64/`, ломая изоляцию бэкендов.
+
+**ФИКС (v1.6.24):**
+1. `DeployNativeLibraries` — больше НЕ кладёт GPU DLL в `runtimes/win-x64/`. CUDA собирается в `runtimes/cuda/win-x64/`, Vulkan остаётся в `runtimes/vulkan/win-x64/` (его кладёт сам single-file publish). Главная защита — принудительное удаление `ggml-vulkan/cuda-whisper.dll` из `runtimes/win-x64/` и корня exe.
+2. `ConfigureCompute` — сбрасывает `RuntimeOptions.LoadedLibrary = null` перед переключением режима (иначе кэшированный GPU-бэкенд переиспользуется после переключения на CPU).
+3. Конструктор `SpeechService` — сразу ставит `RuntimeLibraryOrder = [Cpu]`, чтобы до первого `ConfigureCompute` не выбирался GPU (дефолт whisper.net начинается с CUDA).
+4. `release.yml` — убрано ручное копирование Vulkan DLL в `runtimes/win-x64/`; `dotnet publish` сам раскладывает правильно.
+
+**Проверка (локально):** прямой тест `WhisperFactory.FromPath` + транскрибация на CPU завершились без краша.
 
 ### 3.3. Whisper.net NativeLibraryLoader
 Whisper.net ищет DLL в `runtimes/win-x64/` (НЕ `runtimes/win-x64/native/`). Пути поиска:

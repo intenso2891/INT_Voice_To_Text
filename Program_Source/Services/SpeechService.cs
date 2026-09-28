@@ -19,7 +19,20 @@ public sealed class SpeechService : IDisposable
 {
     internal static SpeechService? _instance;
     private const string ModelFileName = "ggml-large-v3";
-    public SpeechService() { _instance = this; }
+    public SpeechService()
+    {
+        _instance = this;
+        // CRITICAL: Whisper.net's default RuntimeLibraryOrder starts with CUDA. Before
+        // ConfigureCompute runs we must force CPU-first, otherwise the first factory creation
+        // tries a GPU backend and crashes (0xc0000409) on machines with incompatible drivers.
+        try
+        {
+            Whisper.net.LibraryLoader.RuntimeOptions.RuntimeLibraryOrder =
+                new List<Whisper.net.LibraryLoader.RuntimeLibrary> { Whisper.net.LibraryLoader.RuntimeLibrary.Cpu };
+            Whisper.net.LibraryLoader.RuntimeOptions.LoadedLibrary = null;
+        }
+        catch { }
+    }
     private readonly Mutex _crossProcessDownload = new(false, @"Local\INT_VoiceToText.ModelDownload");
     private const long LargeV3Bytes = 3_095_033_483;
     public event Action<ModelProgress>? ProgressChanged;
@@ -109,6 +122,15 @@ public sealed class SpeechService : IDisposable
             };
             _useGpu = mode is "gpu-nvidia" or "gpu-vulkan" or "hybrid-nvidia" or "hybrid-vulkan";
             _gpuDevice = Math.Max(0, gpuDevice);
+
+            // CRITICAL: Whisper.net caches the loaded native library in a static field. Reset it
+            // so the new mode actually takes effect on the next factory creation (otherwise a
+            // previously loaded GPU backend keeps being reused even after switching to CPU).
+            try
+            {
+                Whisper.net.LibraryLoader.RuntimeOptions.LoadedLibrary = null;
+            }
+            catch { }
 
             // Deploy correct native libraries for this mode
             DeployNativeLibraries(mode);
@@ -527,9 +549,14 @@ public sealed class SpeechService : IDisposable
 
     /// <summary>
     /// Deploy native Whisper DLLs for the selected compute mode.
-    /// CRITICAL: ggml-cuda-whisper.dll MUST NOT be in runtimes/win-x64/ unless NVIDIA mode is active.
-    /// Whisper.net NativeLibraryLoader scans ALL DLLs in runtimes/win-x64/ and loads them.
-    /// If ggml-cuda-whisper.dll is present but CUDA runtime is missing/incompatible → ucrtbase c0000409 crash.
+    /// Whisper.net resolves each backend into its OWN subfolder:
+    ///   CPU    → runtimes/win-x64/
+    ///   Vulkan → runtimes/vulkan/win-x64/
+    ///   CUDA   → runtimes/cuda/win-x64/  (and cuda12/win-x64/)
+    /// The loader then loads EVERY ggml-*.dll sitting in that subfolder (see NativeLibraryLoader.dependencyOrder).
+    /// Therefore a stray ggml-vulkan/cuda-whisper.dll inside runtimes/win-x64/ is loaded even in CPU mode
+    /// and hard-crashes (0xc0000409 in ucrtbase.dll) on GPUs whose driver is incompatible. This method
+    /// guarantees the CPU subfolder only ever contains CPU DLLs, and assembles the CUDA subfolder on demand.
     /// </summary>
     public static string DeployNativeLibraries(string mode = "cpu")
     {
@@ -537,12 +564,16 @@ public sealed class SpeechService : IDisposable
         {
             var exeDir = ExeDir();
             var useCuda = mode is "gpu-nvidia" or "hybrid-nvidia";
-            var useVulkan = mode is "gpu-vulkan" or "hybrid-vulkan";
+            var searchBases = new[] { AppContext.BaseDirectory, exeDir }
+                .Where(d => !string.IsNullOrWhiteSpace(d))
+                .Distinct()
+                .ToArray();
 
-            // 1. ALWAYS remove GPU DLLs from ALL runtime search paths first (safety)
-            foreach (var baseDir in new[] { AppContext.BaseDirectory, exeDir })
+            // 1) CRITICAL FIX: purge GPU backend DLLs from the CPU runtime folder and the app root.
+            //    This is the single most important line of defence against the 0xc0000409 crash.
+            foreach (var baseDir in searchBases)
             {
-                foreach (var sub in new[] { "", "runtimes/win-x64", "runtimes/win-x64/native", "runtimes/cuda/win-x64", "runtimes/cuda12/win-x64", "runtimes/vulkan/win-x64" })
+                foreach (var sub in new[] { "", "runtimes/win-x64", "runtimes/win-x64/native" })
                 {
                     foreach (var gpuDll in new[] { "ggml-cuda-whisper.dll", "ggml-vulkan-whisper.dll" })
                     {
@@ -552,52 +583,68 @@ public sealed class SpeechService : IDisposable
                 }
             }
 
-            // 2. Build DLL list for this mode
-            var dllList = new List<string> { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll" };
-            if (useVulkan) dllList.Add("ggml-vulkan-whisper.dll");
-            if (useCuda) dllList.Add("ggml-cuda-whisper.dll");
-            string[] dlls = dllList.ToArray();
-
-            // 3. Deploy DLLs to runtimes/win-x64/ (Whisper.net search path)
-            var report = new System.Text.StringBuilder();
             int deployed = 0;
-            var searchBases = new List<string> { AppContext.BaseDirectory, exeDir };
 
-            foreach (var baseDir in searchBases.Distinct())
+            // 2) Ensure CPU DLLs are present in runtimes/win-x64/ for every search base.
+            //    Single-file publish already extracts them; this covers the portable folder fallback.
+            foreach (var baseDir in searchBases)
             {
                 var runtimeDir = Path.Combine(baseDir, "runtimes", "win-x64");
-                var nativeDir = Path.Combine(runtimeDir, "native");
                 Directory.CreateDirectory(runtimeDir);
-                Directory.CreateDirectory(nativeDir);
-
-                foreach (var dll in dlls)
+                foreach (var dll in CpuDlls)
                 {
-                    string? src = null;
-                    // Search in exeDir subdirs for the source DLL
-                    foreach (var srcDir in new[] { Path.Combine(exeDir, "runtimes", "win-x64"), Path.Combine(exeDir, "runtimes", "win-x64", "native"), Path.Combine(exeDir, "cuda"), exeDir })
-                    {
-                        var p = Path.Combine(srcDir, dll);
-                        if (File.Exists(p)) { src = p; break; }
-                    }
-                    if (src == null) continue;
-
-                    foreach (var dst in new[] { Path.Combine(runtimeDir, dll), Path.Combine(nativeDir, dll) })
-                    {
-                        try
-                        {
-                            if (!File.Exists(dst) || new FileInfo(dst).Length != new FileInfo(src).Length)
-                                File.Copy(src, dst, true);
-                        }
-                        catch { }
-                    }
-                    deployed++;
+                    if (EnsureDll(exeDir, runtimeDir, dll)) deployed++;
                 }
             }
 
+            // 3) CUDA mode: assemble runtimes/cuda/win-x64/ = CPU DLLs + ggml-cuda-whisper.dll.
+            //    NEVER copy ggml-cuda-whisper.dll into runtimes/win-x64/.
+            if (useCuda)
+            {
+                foreach (var baseDir in searchBases)
+                {
+                    var cudaDir = Path.Combine(baseDir, "runtimes", "cuda", "win-x64");
+                    Directory.CreateDirectory(cudaDir);
+                    foreach (var dll in CpuDlls)
+                    {
+                        if (EnsureDll(exeDir, cudaDir, dll)) deployed++;
+                    }
+                    if (EnsureDll(Path.Combine(exeDir, "cuda"), cudaDir, "ggml-cuda-whisper.dll")) deployed++;
+                }
+            }
+
+            // 4) Vulkan mode: single-file publish already extracts runtimes/vulkan/win-x64/ correctly,
+            //    so no manual copy is needed and we never touch that folder (AMD/Vulkan keeps working).
+
             _nativeDeployed = true;
-            report.Append($"DLL deploy: {deployed} files → runtimes/win-x64/ in {searchBases.Count} locations");
-            return report.ToString();
+            return $"DLL deploy [{mode}]: {deployed} files";
         }
+    }
+
+    private static readonly string[] CpuDlls =
+        { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll" };
+
+    /// <summary>Copy <paramref name="dll"/> from any of the usual source folders into <paramref name="dstDir"/>.
+    /// Returns true when the file is present at the destination afterwards.</summary>
+    private static bool EnsureDll(string srcDir, string dstDir, string dll)
+    {
+        var candidates = new[]
+        {
+            Path.Combine(srcDir, dll),
+            Path.Combine(srcDir, "runtimes", "win-x64", dll),
+            Path.Combine(srcDir, "runtimes", "win-x64", "native", dll),
+        };
+        var src = candidates.FirstOrDefault(File.Exists);
+        if (src == null) return false;
+
+        var dst = Path.Combine(dstDir, dll);
+        try
+        {
+            if (!File.Exists(dst) || new FileInfo(dst).Length != new FileInfo(src).Length)
+                File.Copy(src, dst, true);
+            return true;
+        }
+        catch { return false; }
     }
 
     /// <summary>Check native library status (for diagnostics).</summary>
