@@ -269,6 +269,9 @@ public sealed class VoiceEngine : IDisposable
     /// <summary>Download a specific model by id (tiny/base/small/medium/large-v3).</summary>
     public Task<string?> DownloadModelAsync(string modelId, CancellationToken ct) => _speech.DownloadModelAsync(modelId, ct);
 
+    /// <summary>Download CUDA DLL for NVIDIA GPU support.</summary>
+    public Task<bool> DownloadCudaDllAsync(CancellationToken ct) => _speech.DownloadCudaDllAsync(ct);
+
     /// <summary>Last download error (null if none).</summary>
     public string? ModelLastError => _speech.LastError;
 

@@ -142,6 +142,27 @@ app.MapPost("/api/models/retry", async () =>
     return Results.Ok(result);
 });
 
+// Download CUDA DLL for NVIDIA GPU support (fire-and-forget with progress)
+app.MapPost("/api/cuda/download", () =>
+{
+    _ = Task.Run(async () =>
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(30));
+        try { await engine.DownloadCudaDllAsync(cts.Token); } catch { }
+    });
+    return Results.Ok(new { ok = true, started = true });
+});
+
+// Check if CUDA DLL is available
+app.MapGet("/api/cuda/status", () =>
+{
+    var cudaDir = Path.Combine(AppContext.BaseDirectory, "cuda");
+    var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+    var cudaDll = Path.Combine(exeDir, "cuda", "ggml-cuda-whisper.dll");
+    var exists = File.Exists(cudaDll);
+    return Results.Ok(new { available = exists, sizeMB = exists ? Math.Round(new FileInfo(cudaDll).Length / 1048576.0, 1) : 0 });
+});
+
 app.MapGet("/api/debug/log", () =>
 {
     var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "INT_VoiceToText", "debug.log");

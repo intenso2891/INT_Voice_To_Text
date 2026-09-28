@@ -159,6 +159,78 @@ function ModelCatalog({ backend }: { backend: BackendType }) {
 }
 
 // ---------------------------------------------------------------------------
+// CudaDownloadPanel — download CUDA DLL when NVIDIA mode is selected
+// ---------------------------------------------------------------------------
+function CudaDownloadPanel() {
+  const { t } = useTranslation();
+  const [status, setStatus] = useState<"checking" | "available" | "missing" | "downloading">("checking");
+  const [progress, setProgress] = useState(0);
+
+  const check = useCallback(() => {
+    fetch("/api/cuda/status").then(r => r.json()).then((d: { available: boolean }) => {
+      setStatus(d.available ? "available" : "missing");
+    }).catch(() => setStatus("missing"));
+  }, []);
+
+  useEffect(() => { check(); }, [check]);
+
+  const download = async () => {
+    setStatus("downloading");
+    setProgress(0);
+    try {
+      await fetch("/api/cuda/download", { method: "POST" });
+      const poll = setInterval(async () => {
+        try {
+          const r = await fetch("/api/cuda/status");
+          const d = await r.json() as { available: boolean };
+          if (d.available) {
+            clearInterval(poll);
+            setStatus("available");
+          }
+        } catch {}
+      }, 3000);
+      const progPoll = setInterval(async () => {
+        try {
+          const r = await fetch("/api/debug/log");
+          const text = await r.text();
+          const m = text.match(/CUDA_DLL_PROGRESS: (\d+)%/g);
+          if (m && m.length > 0) {
+            const last = m[m.length - 1];
+            const pct = parseInt(last.match(/(\d+)%/)?.[1] || "0");
+            setProgress(pct);
+          }
+          if (text.includes("CUDA_DLL_OK")) {
+            clearInterval(progPoll);
+            setProgress(100);
+          }
+        } catch {}
+      }, 2000);
+    } catch {
+      setStatus("missing");
+    }
+  };
+
+  if (status === "checking") return <div className="cuda-panel"><small>Проверка CUDA DLL...</small></div>;
+  if (status === "available") return <div className="cuda-panel"><small className="cuda-ok">✓ CUDA DLL установлена (538 МБ)</small></div>;
+
+  return (
+    <div className="cuda-panel">
+      {status === "downloading" ? (
+        <div className="cuda-download">
+          <small>Скачивание CUDA DLL... {progress}%</small>
+          <div className="cuda-progress"><div className="cuda-progress-bar" style={{width: `${progress}%`}} /></div>
+        </div>
+      ) : (
+        <div className="cuda-download">
+          <small className="cuda-warn">⚠ Для NVIDIA нужна CUDA DLL (538 МБ)</small>
+          <button className="retry-btn" onClick={download}>Скачать CUDA DLL</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ModelFilesList — lazy-loaded list of model files in the models/ directory
 // ---------------------------------------------------------------------------
 function ModelFilesList({ backend }: { backend: BackendType }) {
@@ -750,6 +822,9 @@ export default function App() {
                 <option value="hybrid-nvidia">CPU + GPU — NVIDIA (CUDA)</option>
               </select>
             </div>
+            {(info.computeMode === "gpu-nvidia" || info.computeMode === "hybrid-nvidia") && (
+              <CudaDownloadPanel />
+            )}
           </div>
 
           <label className="field-row check debug-toggle">

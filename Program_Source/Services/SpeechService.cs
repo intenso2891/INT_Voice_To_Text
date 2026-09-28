@@ -2,6 +2,7 @@
 // INT VoiceToText — local speech-to-text (Whisper.net, fully offline)
 // ============================================================================
 
+using System.IO.Compression;
 using Whisper.net;
 using Whisper.net.Ggml;
 
@@ -261,6 +262,90 @@ public sealed class SpeechService : IDisposable
             }
         }
         return new { deleted, freedMB = Math.Round(freed / 1048576.0, 1) };
+    }
+
+    /// <summary>
+    /// Download CUDA DLL (ggml-cuda-whisper.dll) from NuGet for NVIDIA GPU support.
+    /// The DLL is ~538 MB and is downloaded only when user selects NVIDIA mode for the first time.
+    /// </summary>
+    public async Task<bool> DownloadCudaDllAsync(CancellationToken ct = default)
+    {
+        var cudaDir = Path.Combine(ExeDir(), "cuda");
+        var cudaDll = Path.Combine(cudaDir, "ggml-cuda-whisper.dll");
+        if (File.Exists(cudaDll)) return true; // already downloaded
+
+        Directory.CreateDirectory(cudaDir);
+
+        // Download whisper.net.runtime.cuda12.windows nupkg (ZIP) and extract ggml-cuda-whisper.dll
+        var nupkgUrl = "https://api.nuget.org/v3-flatcontainer/whisper.net.runtime.cuda12.windows/1.9.1/whisper.net.runtime.cuda12.windows.1.9.1.nupkg";
+        var mirrors = new[]
+        {
+            nupkgUrl,
+            nupkgUrl.Replace("api.nuget.org", "nuget.cdn.azure.cn"),
+        };
+
+        var tmpNupkg = Path.Combine(cudaDir, "cuda.nupkg.downloading");
+
+        foreach (var url in mirrors)
+        {
+            try
+            {
+                OnDebug?.Invoke($"CUDA_DLL_DOWNLOAD: скачиваю CUDA DLL с {new Uri(url).Host}...");
+                using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
+                using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                resp.EnsureSuccessStatusCode();
+
+                var totalBytes = resp.Content.Headers.ContentLength ?? 538_000_000L;
+                await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                await using var fs = File.Create(tmpNupkg);
+
+                var buffer = new byte[81920];
+                long downloaded = 0;
+                int read;
+                var lastReport = DateTime.UtcNow;
+
+                while ((read = await stream.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                {
+                    await fs.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                    downloaded += read;
+
+                    if ((DateTime.UtcNow - lastReport).TotalSeconds > 2)
+                    {
+                        lastReport = DateTime.UtcNow;
+                        var pct = (int)(downloaded * 100 / totalBytes);
+                        OnDebug?.Invoke($"CUDA_DLL_PROGRESS: {pct}% ({downloaded / 1048576}MB / {totalBytes / 1048576}MB)");
+                        ProgressChanged?.Invoke(Progress with { Bytes = downloaded, TotalBytes = totalBytes, Completed = false });
+                    }
+                }
+
+                await fs.FlushAsync(ct).ConfigureAwait(false);
+                fs.Close();
+
+                // Extract ggml-cuda-whisper.dll from nupkg (ZIP)
+                OnDebug?.Invoke("CUDA_DLL_EXTRACT: распаковка...");
+                using var zip = System.IO.Compression.ZipFile.OpenRead(tmpNupkg);
+                var entry = zip.Entries.FirstOrDefault(e => e.Name.Equals("ggml-cuda-whisper.dll", StringComparison.OrdinalIgnoreCase));
+                if (entry == null) throw new FileNotFoundException("ggml-cuda-whisper.dll not found in nupkg");
+
+                entry.ExtractToFile(cudaDll, true);
+                zip.Dispose();
+
+                try { File.Delete(tmpNupkg); } catch { }
+
+                OnDebug?.Invoke($"CUDA_DLL_OK: CUDA DLL установлен ({new FileInfo(cudaDll).Length / 1048576}MB)");
+                ProgressChanged?.Invoke(Progress with { Bytes = totalBytes, TotalBytes = totalBytes, Completed = true });
+                return true;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                OnDebug?.Invoke($"CUDA_DLL_FAIL: {new Uri(url).Host} — {ex.Message}");
+                try { if (File.Exists(tmpNupkg)) File.Delete(tmpNupkg); } catch { }
+            }
+        }
+
+        LastError = "CUDA_DLL_DOWNLOAD_FAILED: Не удалось скачать CUDA DLL. Скачайте вручную с https://developer.nvidia.com/cuda-downloads";
+        return false;
     }
 
     /// <summary>Download a specific model by id. Tries multiple mirrors with stall detection.</summary>
