@@ -4,7 +4,7 @@
 
 Офлайн-приложение для Windows: нажал глобальную горячую клавишу → сказал → распознанный текст автоматически в буфере обмена (и при желании вставлен `Ctrl+V` в любое окно). Работает полностью локально — голос никуда не отправляется.
 
-![Version](https://img.shields.io/badge/версия-1.6.12-8b7cff?style=for-the-badge&labelColor=0d1221)
+![Version](https://img.shields.io/badge/версия-1.6.23-8b7cff?style=for-the-badge&labelColor=0d1221)
 ![Platform](https://img.shields.io/badge/Windows-10%2F11-5ee7d1?style=for-the-badge&labelColor=0d1221)
 ![Offline](https://img.shields.io/badge/работает-офлайн-63e6a6?style=for-the-badge&labelColor=0d1221)
 ![Made by](https://img.shields.io/badge/Created%20by-INTENSO.Dev-ff6680?style=for-the-badge&labelColor=0d1221)
@@ -21,8 +21,9 @@
 | 🎨 **Трей** | Сворачивается в трей при закрытии; иконка синяя — готовность, зелёная — идёт запись |
 | 🌐 **RU / EN** | Распознавание и интерфейс на двух языках |
 | 🗣️ **Словарь исправлений** | Русское произношение превращается в латиницу (`дейз → DayZ`, `дейзавр → DayZavr`); редактируется без перекомпиляции |
-| 🚀 **CPU / GPU** | Выбор устройства распознавания: CPU, GPU или CPU+GPU |
+| 🚀 **CPU / GPU** | Выбор устройства распознавания: CPU, Vulkan (AMD) или CUDA (NVIDIA) |
 | 🔄 **Автообновление** | При запуске проверяет GitHub Releases; при наличии новой версии предлагает обновить одним кликом |
+| 📦 **Модели** | Выбор модели (Tiny → Large V3), скачивание с зеркал, удаление |
 
 ---
 
@@ -32,10 +33,11 @@
 INT_Voice_To_Text/
 ├── Program_Source/   ← исходный код и сборка
 ├── README.md         ← этот файл
+├── DEVROAD.md        ← техническая документация для разработки
 └── .gitignore
 ```
 
-Готовая программа `Program` (~5 ГБ с моделями) **не хранится в репозитории** — она распространяется через [Releases](#-releases).
+Готовая программа `Program` (~1.4 ГБ с моделью) **не хранится в репозитории** — она распространяется через [Releases](#-releases).
 
 ---
 
@@ -44,13 +46,14 @@ INT_Voice_To_Text/
 1. Скачайте последнюю версию в разделе **Releases**.
 2. Распакуйте архив — внутри папка `Program`.
 3. Запустите `INT_VoiceToText.exe`.
-4. Нажмите горячую клавишу (по умолчанию `Ctrl+Win+Alt+A`), скажите фразу.
-5. Готово — текст уже в буфере обмена, вставьте `Ctrl+V` в любое место.
+4. Выберите модель и дождитесь загрузки.
+5. Нажмите горячую клавишу (по умолчанию `Alt+Win+Z`), скажите фразу.
+6. Готово — текст уже в буфере обмена, вставьте `Ctrl+V` в любое место.
 
 > [!NOTE]
 > Требуется Windows 10/11 и установленный **WebView2 Runtime** (обычно уже есть).
 >
-> При первом запуске программа предложит скачать модель Whisper. Всё работает полностью офлайн.
+> Запустите **Install-Requirements.bat** для автоматической установки всех зависимостей.
 
 ---
 
@@ -64,6 +67,18 @@ INT_Voice_To_Text/
 | [Microsoft Visual C++ Redistributable 2022](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) (x64) | Уже установлен у большинства; если нет — скачать |
 | Оперативная память | от 4 ГБ (модель Tiny) до 8 ГБ (Large V3) |
 
+> [!TIP]
+> Запустите `Install-Requirements.bat` — он автоматически проверит и установит WebView2, VC++ Redistributable и CUDA Toolkit (если нужно).
+
+### Режимы распознавания
+| Режим | Для кого | Скорость | Статус |
+|-------|----------|----------|--------|
+| **CPU** | Все ПК (безопасно) | Медленнее | ✅ Стабильно |
+| **GPU — Vulkan** | AMD / Intel | Быстро | ✅ Стабильно |
+| **GPU — NVIDIA (CUDA)** | GeForce / RTX | Быстро | ⚠️ Требует CUDA Toolkit |
+| **CPU + GPU — Vulkan** | Гибридный режим | Средне | ✅ Стабильно |
+| **CPU + GPU — NVIDIA** | Гибридный режим | Средне | ⚠️ Требует CUDA Toolkit |
+
 ### Для GPU — NVIDIA (CUDA)
 | Компонент | Требование |
 |-----------|-----------|
@@ -71,23 +86,10 @@ INT_Voice_To_Text/
 | Драйвер NVIDIA | Последний с сайта nvidia.ru |
 | [CUDA Toolkit 12.4+](https://developer.nvidia.com/cuda-downloads) | **Обязательно** — скачать и установить |
 
+При первом выборе NVIDIA режима программа предложит скачать CUDA DLL (538 МБ) автоматически.
+
 > [!IMPORTANT]
 > Без CUDA Toolkit режим **NVIDIA (CUDA)** не будет работать. Если CUDA Toolkit не установлен — выберите **CPU** в настройках.
-
-### Для GPU — Vulkan (AMD / Intel)
-| Компонент | Требование |
-|-----------|-----------|
-| Видеокарта | AMD Radeon / Intel Arc / Intel Iris Xe |
-| [Vulkan Runtime](https://vulkan.lunarg.com/sdk/home) | Обычно уже установлен с драйвером видеокарты |
-
-### Режимы распознавания
-| Режим | Для кого | Скорость |
-|-------|----------|----------|
-| **CPU** | Все ПК (безопасно) | Медленнее |
-| **GPU — NVIDIA (CUDA)** | GeForce / RTX | Быстро |
-| **GPU — Vulkan** | AMD / Intel | Быстро |
-| **CPU + GPU — NVIDIA** | Гибридный режим | Средне |
-| **CPU + GPU — Vulkan** | Гибридный режим | Средне |
 
 ---
 
@@ -110,10 +112,7 @@ dotnet publish -c Release -r win-x64 --self-contained true `
   -o ..\Program
 ```
 
-> [!TIP]
-> После публикации папки `bin/`, `obj/`, `wwwroot/` и `frontend/node_modules/` создаются автоматически и в Git не загружаются.
-
-Подробная документация по архитектуре — в [Program_Source/README.md](Program_Source/README.md).
+Подробнее — в [DEVROAD.md](DEVROAD.md).
 
 ---
 
@@ -123,21 +122,17 @@ dotnet publish -c Release -r win-x64 --self-contained true `
 
 ```powershell
 git add .
-git commit -m "Release v1.5.3"
-git tag v1.5.3
+git commit -m "Release v1.6.24"
+git tag v1.6.24
 git push origin main --tags
 ```
 
-После отправки тега GitHub соберёт `Program` из `Program_Source` и опубликует архив в разделе **Releases**. Готовые сборки не хранятся в обычных файлах репозитория — они слишком большие из-за native runtime.
-
-Готовые сборки публикуются в разделе **Releases** — не в файлы репозитория (они слишком большие из-за моделей).
-
 ```text
-v1.5.2
-└── INT_VoiceToText-1.5.2.zip   (Program без модели Large V3)
+v1.6.23
+└── INT_VoiceToText-v1.6.23.zip   (~172 МБ, без модели)
 ```
 
-Модель Large V3 (~3 ГБ) не входит в архив из-за ограничений GitHub — приложение скачивает её само при первом запуске.
+Модель Large V3 (~3 ГБ) не входит в архив — выберите и скачайте её в настройках программы.
 
 ---
 
