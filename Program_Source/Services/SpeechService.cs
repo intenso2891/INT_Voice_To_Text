@@ -151,11 +151,17 @@ public sealed class SpeechService : IDisposable
             // Force the GPU backend via Whisper.net RuntimeLibraryOrder
             try
             {
+                var cudaMajor = GetCudaMajorVersion();
                 Whisper.net.LibraryLoader.RuntimeOptions.RuntimeLibraryOrder = _gpuBackend switch
                 {
-                    "cuda" or "cuda-hybrid" => new List<Whisper.net.LibraryLoader.RuntimeLibrary>
+                    // Match the installed CUDA major version — the wrong runtime hard-crashes (0xc0000409)
+                    "cuda" or "cuda-hybrid" when cudaMajor >= 13 => new List<Whisper.net.LibraryLoader.RuntimeLibrary>
                     {
                         Whisper.net.LibraryLoader.RuntimeLibrary.Cuda,
+                        Whisper.net.LibraryLoader.RuntimeLibrary.Cpu,
+                    },
+                    "cuda" or "cuda-hybrid" => new List<Whisper.net.LibraryLoader.RuntimeLibrary>
+                    {
                         Whisper.net.LibraryLoader.RuntimeLibrary.Cuda12,
                         Whisper.net.LibraryLoader.RuntimeLibrary.Cpu,
                     },
@@ -301,18 +307,32 @@ public sealed class SpeechService : IDisposable
 
     /// <summary>
     /// Download CUDA DLL (ggml-cuda-whisper.dll) from NuGet for NVIDIA GPU support.
-    /// The DLL is ~538 MB and is downloaded only when user selects NVIDIA mode for the first time.
+    /// Picks the runtime matching the installed CUDA Toolkit major version: CUDA 13 → cuda.windows
+    /// (147 MB), CUDA 12 → cuda12.windows (538 MB). The wrong one hard-crashes (0xc0000409).
     /// </summary>
     public async Task<bool> DownloadCudaDllAsync(CancellationToken ct = default)
     {
-        var cudaDir = Path.Combine(ExeDir(), "cuda");
+        var major = GetCudaMajorVersion();
+        var pkg = major >= 13 ? "whisper.net.runtime.cuda.windows" : "whisper.net.runtime.cuda12.windows";
+        var subDir = major >= 13 ? "cuda" : "cuda12";
+        var cudaDir = Path.Combine(ExeDir(), subDir);
         var cudaDll = Path.Combine(cudaDir, "ggml-cuda-whisper.dll");
-        if (File.Exists(cudaDll)) return true; // already downloaded
+
+        // Guard against a stale/mismatched DLL: CUDA 13 ≈ 147 MB, CUDA 12 ≈ 538 MB.
+        // If the wrong version is present (e.g. an old CUDA 12 download while on CUDA 13),
+        // delete it so we re-download the correct one — otherwise it hard-crashes (0xc0000409).
+        if (File.Exists(cudaDll))
+        {
+            var len = new FileInfo(cudaDll).Length;
+            var expected = major >= 13 ? 147_000_000L : 538_000_000L;
+            if (Math.Abs(len - expected) < 50_000_000L) return true; // correct version already present
+            try { File.Delete(cudaDll); } catch { }
+        }
 
         Directory.CreateDirectory(cudaDir);
 
-        // Download whisper.net.runtime.cuda12.windows nupkg (ZIP) and extract ggml-cuda-whisper.dll
-        var nupkgUrl = "https://api.nuget.org/v3-flatcontainer/whisper.net.runtime.cuda12.windows/1.9.1/whisper.net.runtime.cuda12.windows.1.9.1.nupkg";
+        // Download the matching nupkg (ZIP) and extract ggml-cuda-whisper.dll
+        var nupkgUrl = $"https://api.nuget.org/v3-flatcontainer/{pkg}/1.9.1/{pkg}.1.9.1.nupkg";
         var mirrors = new[]
         {
             nupkgUrl,
@@ -610,19 +630,26 @@ public sealed class SpeechService : IDisposable
                 }
             }
 
-            // 3) CUDA mode: assemble runtimes/cuda/win-x64/ = CPU DLLs + ggml-cuda-whisper.dll.
+            // 3) CUDA mode: assemble the runtime folder = CPU DLLs + ggml-cuda-whisper.dll.
+            //    The subfolder MUST match the installed CUDA major version (wrong one → 0xc0000409):
+            //      CUDA 13+ → runtimes/cuda/win-x64/     (DLL from cuda/)
+            //      CUDA 12  → runtimes/cuda12/win-x64/   (DLL from cuda12/)
             //    NEVER copy ggml-cuda-whisper.dll into runtimes/win-x64/.
             if (useCuda)
             {
+                var major = GetCudaMajorVersion();
+                var cudaSub = major >= 13 ? "cuda" : "cuda12";
+                var srcCudaDir = major >= 13 ? Path.Combine(exeDir, "cuda") : Path.Combine(exeDir, "cuda12");
+
                 foreach (var baseDir in searchBases)
                 {
-                    var cudaDir = Path.Combine(baseDir, "runtimes", "cuda", "win-x64");
+                    var cudaDir = Path.Combine(baseDir, "runtimes", cudaSub, "win-x64");
                     Directory.CreateDirectory(cudaDir);
                     foreach (var dll in CpuDlls)
                     {
                         if (EnsureDll(exeDir, cudaDir, dll)) deployed++;
                     }
-                    if (EnsureDll(Path.Combine(exeDir, "cuda"), cudaDir, "ggml-cuda-whisper.dll")) deployed++;
+                    if (EnsureDll(srcCudaDir, cudaDir, "ggml-cuda-whisper.dll")) deployed++;
                 }
             }
 
@@ -806,6 +833,36 @@ public sealed class SpeechService : IDisposable
         }
 
         return false;
+    }
+
+    /// <summary>Detect the major CUDA version (12, 13, …) installed on this machine. 0 = unknown/absent.
+    /// whisper.net ships separate runtimes for CUDA 12 (cuda12) and CUDA 13+ (cuda), and the wrong
+    /// one hard-crashes (0xc0000409) — so we must match the installed Toolkit major version.</summary>
+    private static int GetCudaMajorVersion()
+    {
+        var cudaPath = Environment.GetEnvironmentVariable("CUDA_PATH");
+        if (!string.IsNullOrEmpty(cudaPath))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(cudaPath, @"v(\d+)");
+            if (m.Success && int.TryParse(m.Groups[1].Value, out var v)) return v;
+        }
+        try
+        {
+            var sys32 = Environment.SystemDirectory;
+            foreach (var f in Directory.EnumerateFiles(sys32, "cudart64_*.dll"))
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(Path.GetFileName(f), @"cudart64_(\d+)");
+                if (m.Success && int.TryParse(m.Groups[1].Value, out var v)) return v;
+            }
+        }
+        catch { }
+        // Common Toolkit install paths (v13 → 13, v12.x → 12)
+        foreach (var ver in new[] { "v13.0", "v12.6", "v12.5", "v12.4", "v12.3", "v12.2", "v12.1", "v12.0", "v11.8" })
+        {
+            var dir = $@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\{ver}";
+            try { if (Directory.Exists(dir)) { int.TryParse(ver.TrimStart('v').Split('.')[0], out var v); return v; } } catch { }
+        }
+        return 0;
     }
 
     private static string ExeDir()
