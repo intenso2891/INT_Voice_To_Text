@@ -23,6 +23,7 @@ export interface AppStateDto {
   modelProgress: { bytes: number; totalBytes: number; percent: number; completed: boolean };
   runtime: { directory: string; runtimesDirExists: boolean; dlls: { name: string; exists: boolean; sizeKB: number }[] };
   modelLastError: string | null;
+  lastError: string | null;
 }
 
 export interface ModelFile {

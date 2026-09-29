@@ -825,6 +825,11 @@ export default function App() {
             {(info.computeMode === "gpu-nvidia" || info.computeMode === "hybrid-nvidia") && (
               <CudaDownloadPanel />
             )}
+            {info.lastError && info.lastError.startsWith("CUDA_NOT_FOUND") && (
+              <div className="cuda-panel">
+                <small className="cuda-warn" style={{margin: 0}}>⚠ {info.lastError}</small>
+              </div>
+            )}
           </div>
 
           <label className="field-row check debug-toggle">

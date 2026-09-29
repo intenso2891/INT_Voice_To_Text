@@ -123,6 +123,19 @@ public sealed class SpeechService : IDisposable
             _useGpu = mode is "gpu-nvidia" or "gpu-vulkan" or "hybrid-nvidia" or "hybrid-vulkan";
             _gpuDevice = Math.Max(0, gpuDevice);
 
+            // NVIDIA mode requires CUDA Toolkit (cudart/cublas). Without it Whisper.net silently
+            // falls back to CPU — surface that clearly so the user knows why the GPU isn't used.
+            if ((mode is "gpu-nvidia" or "hybrid-nvidia") && !IsCudaAvailable())
+            {
+                LastError = "CUDA_NOT_FOUND: CUDA Toolkit не установлен — используется CPU. " +
+                             "Установите CUDA Toolkit 12.4+ с developer.nvidia.com/cuda-downloads или выберите CPU.";
+                OnDebug?.Invoke("CUDA_NOT_FOUND: CUDA Toolkit не найден (cudart/cublas) — GPU NVIDIA недоступен, будет CPU.");
+            }
+            else
+            {
+                LastError = null;
+            }
+
             // CRITICAL: Whisper.net caches the loaded native library in a static field. Reset it
             // so the new mode actually takes effect on the next factory creation (otherwise a
             // previously loaded GPU backend keeps being reused even after switching to CPU).
