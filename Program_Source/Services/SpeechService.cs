@@ -651,6 +651,37 @@ public sealed class SpeechService : IDisposable
                     }
                     if (EnsureDll(srcCudaDir, cudaDir, "ggml-cuda-whisper.dll")) deployed++;
                 }
+
+                // 3b) Copy CUDA runtime DLLs (cudart64_*, cublas64_*, cublasLt64_*) from the Toolkit
+                //     bin folder NEXT TO ggml-cuda-whisper.dll. ggml-cuda-whisper.dll depends on them at
+                //     load time, and whisper.net loads with safe search flags (no PATH) — so without this
+                //     the CUDA backend silently fails and falls back to CPU.
+                var cudaBin = FindCudaBin();
+                if (cudaBin != null)
+                {
+                    foreach (var baseDir in searchBases)
+                    {
+                        var cudaDir = Path.Combine(baseDir, "runtimes", cudaSub, "win-x64");
+                        Directory.CreateDirectory(cudaDir);
+                        foreach (var pattern in new[] { "cudart64_*.dll", "cublas64_*.dll", "cublasLt64_*.dll" })
+                        {
+                            foreach (var f in Directory.EnumerateFiles(cudaBin, pattern))
+                            {
+                                if (EnsureDllFromFile(f, cudaDir)) deployed++;
+                            }
+                        }
+                        // cudart must also be findable from the app root for CudaHelper.IsCudaAvailable
+                        foreach (var f in Directory.EnumerateFiles(cudaBin, "cudart64_*.dll"))
+                        {
+                            EnsureDllFromFile(f, baseDir);
+                        }
+                    }
+                    _instance?.OnDebug?.Invoke($"CUDA_RUNTIME_COPIED from {cudaBin}");
+                }
+                else
+                {
+                    _instance?.OnDebug?.Invoke("CUDA_RUNTIME_NOT_FOUND: CUDA Toolkit bin не найден (cudart/cublas) — GPU может не загрузиться.");
+                }
             }
 
             // 4) Vulkan mode: single-file publish already extracts runtimes/vulkan/win-x64/ correctly,
@@ -663,6 +694,21 @@ public sealed class SpeechService : IDisposable
 
     private static readonly string[] CpuDlls =
         { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cpu-whisper.dll" };
+
+    /// <summary>Copy a concrete file into <paramref name="dstDir"/> (preserving its name).
+    /// Returns true when the file is present at the destination afterwards.</summary>
+    private static bool EnsureDllFromFile(string srcFile, string dstDir)
+    {
+        var name = Path.GetFileName(srcFile);
+        var dst = Path.Combine(dstDir, name);
+        try
+        {
+            if (!File.Exists(dst) || new FileInfo(dst).Length != new FileInfo(srcFile).Length)
+                File.Copy(srcFile, dst, true);
+            return true;
+        }
+        catch { return false; }
+    }
 
     /// <summary>Copy <paramref name="dll"/> from any of the usual source folders into <paramref name="dstDir"/>.
     /// Returns true when the file is present at the destination afterwards.</summary>
@@ -781,6 +827,8 @@ public sealed class SpeechService : IDisposable
         }
 
         if (_factory != null) OnDebug?.Invoke("MODEL_LOADED");
+        if (_factory != null)
+            OnDebug?.Invoke($"BACKEND_LOADED: {Whisper.net.LibraryLoader.RuntimeOptions.LoadedLibrary}");
         var factory = _factory;
 
         using var processor = factory.CreateBuilder()
@@ -863,6 +911,24 @@ public sealed class SpeechService : IDisposable
             try { if (Directory.Exists(dir)) { int.TryParse(ver.TrimStart('v').Split('.')[0], out var v); return v; } } catch { }
         }
         return 0;
+    }
+
+    /// <summary>Locate the CUDA Toolkit bin folder (holds cudart64_*.dll, cublas64_*.dll, cublasLt64_*.dll).
+    /// These are NOT on PATH or in System32, so whisper.net's safe DLL search can't find them — we copy them.</summary>
+    private static string? FindCudaBin()
+    {
+        var cudaPath = Environment.GetEnvironmentVariable("CUDA_PATH");
+        if (!string.IsNullOrEmpty(cudaPath))
+        {
+            var bin = Path.Combine(cudaPath, "bin");
+            if (Directory.Exists(bin)) return bin;
+        }
+        foreach (var ver in new[] { "v13.4", "v13.3", "v13.2", "v13.1", "v13.0", "v12.8", "v12.6", "v12.5", "v12.4", "v12.3", "v12.2", "v12.1", "v12.0", "v11.8" })
+        {
+            var bin = $@"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\{ver}\bin";
+            if (Directory.Exists(bin)) return bin;
+        }
+        return null;
     }
 
     private static string ExeDir()
