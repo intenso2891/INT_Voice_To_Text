@@ -32,6 +32,16 @@ public sealed class SpeechService : IDisposable
             Whisper.net.LibraryLoader.RuntimeOptions.LoadedLibrary = null;
         }
         catch { }
+
+        // Forward whisper.net's internal logs (CUDA detection, DLL loading) into our debug log.
+        try
+        {
+            Whisper.net.Logger.LogProvider.AddLogger((level, message) =>
+            {
+                try { _instance?.OnDebug?.Invoke($"[whisper:{level}] {message}"); } catch { }
+            });
+        }
+        catch { }
     }
     private readonly Mutex _crossProcessDownload = new(false, @"Local\INT_VoiceToText.ModelDownload");
     private const long LargeV3Bytes = 3_095_033_483;
@@ -172,6 +182,24 @@ public sealed class SpeechService : IDisposable
                     },
                     _ => new List<Whisper.net.LibraryLoader.RuntimeLibrary> { Whisper.net.LibraryLoader.RuntimeLibrary.Cpu },
                 };
+            }
+            catch { }
+
+            // ── CUDA diagnostics: log the full decision state so we can see why GPU isn't used ──
+            try
+            {
+                var cudaMajor = GetCudaMajorVersion();
+                var cudaBin = FindCudaBin();
+                var exeDir = ExeDir();
+                var cuda13Dll = Path.Combine(exeDir, "cuda", "ggml-cuda-whisper.dll");
+                var cuda12Dll = Path.Combine(exeDir, "cuda12", "ggml-cuda-whisper.dll");
+                var sysCudart = "(none)";
+                try
+                {
+                    sysCudart = string.Join(",", Directory.EnumerateFiles(Environment.SystemDirectory, "cudart64_*.dll").Select(Path.GetFileName));
+                }
+                catch { }
+                OnDebug?.Invoke($"CUDA_DIAG mode={mode} backend={_gpuBackend} cudaMajor={cudaMajor} isCudaAvail={IsCudaAvailable()} cudaBin={(cudaBin ?? "NULL")} cuda13DllExists={File.Exists(cuda13Dll)} cuda12DllExists={File.Exists(cuda12Dll)} sysCudart=[{sysCudart}]");
             }
             catch { }
 
@@ -686,6 +714,21 @@ public sealed class SpeechService : IDisposable
 
             // 4) Vulkan mode: single-file publish already extracts runtimes/vulkan/win-x64/ correctly,
             //    so no manual copy is needed and we never touch that folder (AMD/Vulkan keeps working).
+
+            // ── Log the actual deployed CUDA runtime folder contents (temp dir is what the loader uses) ──
+            try
+            {
+                if (useCuda)
+                {
+                    var cudaSub = GetCudaMajorVersion() >= 13 ? "cuda" : "cuda12";
+                    var tempCudaDir = Path.Combine(AppContext.BaseDirectory, "runtimes", cudaSub, "win-x64");
+                    var listing = Directory.Exists(tempCudaDir)
+                        ? string.Join(",", Directory.EnumerateFiles(tempCudaDir).Select(Path.GetFileName))
+                        : "(dir missing)";
+                    _instance?.OnDebug?.Invoke($"CUDA_DEPLOYED_LISTING [{cudaSub}]: {listing}");
+                }
+            }
+            catch { }
 
             _nativeDeployed = true;
             return $"DLL deploy [{mode}]: {deployed} files";
